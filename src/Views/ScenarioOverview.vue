@@ -7,7 +7,7 @@ import JsonEditorVue from 'json-editor-vue'
 import { Mode } from 'vanilla-jsoneditor'
 import { editScenario, fetchScenarios } from '@/api'
 import { ajaxFeedback } from '@/main'
-import RequirementTree from '@/Views/scenario-overview/RequirementTree.vue'
+import ScenarioMap from '@/Views/scenario-overview/ScenarioMap.vue'
 
 const props = defineProps({
   uuid: String
@@ -117,6 +117,17 @@ function cancel() {
 
 function designScenario() {
   router.push({ name: 'Scenario Designer', params: { uuid: props.uuid }, props: true })
+}
+
+// From the Scenario Map's "Open in Designer": jump to the Stepper with the
+// clicked inject pre-selected (the Designer reads ?inject= on entry).
+function openInjectInDesigner(inject_uuid) {
+  router.push({
+    name: 'Scenario Designer',
+    params: { uuid: props.uuid },
+    query: { inject: inject_uuid },
+    props: true
+  })
 }
 
 onMounted(() => {
@@ -348,13 +359,12 @@ function initForm() {
             </div>
           </div>
 
-          <div class="flex gap-6">
-            <div class="">
-              <RequirementTree></RequirementTree>
-            </div>
-          </div>
         </div>
       </form>
+
+      <div class="mt-6">
+        <ScenarioMap @open-designer="openInjectInDesigner"></ScenarioMap>
+      </div>
     </div>
   </div>
 </template>

@@ -46,6 +46,27 @@ const props = defineProps({
 const route = useRoute()
 const router = useRouter()
 
+// When arriving from the Scenario Map's "Open in Designer", ?inject=<uuid>
+// pre-selects that inject. Applied at most once per navigation so later store
+// updates (e.g. after a save) never yank the selection back.
+let querySelectApplied = false
+function maybeSelectFromQuery() {
+  if (querySelectApplied) {
+    return
+  }
+  const wanted = route.query.inject
+  if (!wanted) {
+    querySelectApplied = true
+    return
+  }
+  if (injectByUUID.value[wanted]) {
+    querySelectApplied = true
+    selectInject(wanted)
+    step.value = 0
+    router.replace({ name: 'Scenario Designer', params: { uuid: props.uuid }, query: {} })
+  }
+}
+
 // Tool accent hues for the rail chips (PRD §11).
 const TOOL_CHIP = {
   MISP: 'bg-indigo-600 text-white',
@@ -59,11 +80,13 @@ onBeforeUnmount(() => {
 
 onMounted(() => {
   resetState()
+  maybeSelectFromQuery()
 })
 
 watch(
   () => route.params.uuid,
   () => {
+    querySelectApplied = false
     resetState()
   }
 )
@@ -300,6 +323,12 @@ const injectFlowByUUID = computed(() => {
     })
   }
   return injectF
+})
+
+// Fallback for a direct load/refresh where the scenario data arrives after
+// mount: apply the ?inject= pre-selection once the injects are available.
+watch(injectByUUID, () => {
+  maybeSelectFromQuery()
 })
 
 const inject_flow = computed(() => {
