@@ -696,7 +696,13 @@ function triggerSummary(injectFlow) {
         <template #item="{ element, index }">
           <div
             @click="selectInject(element.inject_uuid)"
+            @keydown.enter.prevent="selectInject(element.inject_uuid)"
+            @keydown.space.prevent="selectInject(element.inject_uuid)"
             :title="element.inject_uuid"
+            role="button"
+            tabindex="0"
+            :aria-current="selectedInjectFlowUUID == element.inject_uuid ? 'true' : undefined"
+            :aria-label="`Edit inject ${index + 1}: ${injectByUUID[element.inject_uuid].name || 'unnamed inject'}`"
             class="group relative rounded-lg border py-2 pl-7 pr-2 select-none cursor-pointer transition-colors"
             :class="{
               'border-blue-400 bg-blue-50 ring-1 ring-blue-400': selectedInjectFlowUUID == element.inject_uuid,
@@ -722,9 +728,12 @@ function triggerSummary(injectFlow) {
                 </div>
               </div>
               <button
-                class="hidden group-hover:inline-block btn btn-xs btn-danger select-none !border-slate-400 shrink-0"
+                class="hidden group-hover:inline-block focus-visible:inline-block btn btn-xs btn-danger select-none !border-slate-400 shrink-0"
                 title="Delete inject"
+                aria-label="Delete this inject"
                 @click.stop="deleteInjectConfirm(element.inject_uuid)"
+                @keydown.enter.stop
+                @keydown.space.stop
               >
                 <FontAwesomeIcon :icon="faTrash" class="fa-fw"></FontAwesomeIcon>
               </button>

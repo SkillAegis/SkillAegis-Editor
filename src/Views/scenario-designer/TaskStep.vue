@@ -75,12 +75,17 @@ const TOOL_SWATCH = {
               the environment the trainee works in
             </span>
           </label>
-          <div class="inline-flex flex-wrap gap-1 rounded-lg border border-slate-300 bg-slate-100 p-1">
+          <div
+            class="inline-flex flex-wrap gap-1 rounded-lg border border-slate-300 bg-slate-100 p-1"
+            role="group"
+            aria-label="Target tool"
+          >
             <button
               v-for="(tool_info, tool) in ALLOWED_TARGET_TOOLS"
               :key="tool"
               type="button"
               :title="tool_info"
+              :aria-pressed="inject.target_tool === tool"
               class="inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-semibold transition-colors select-none"
               :class="
                 inject.target_tool === tool

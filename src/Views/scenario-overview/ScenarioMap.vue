@@ -648,7 +648,13 @@ onBeforeUnmount(() => {
           :style="nodeStyle(n.uuid)"
           :data-uuid="n.uuid"
           :title="n.uuid"
+          role="button"
+          tabindex="0"
+          :aria-pressed="selectedUuid === n.uuid"
+          :aria-label="`Inject ${n.index + 1}: ${n.name || 'unnamed inject'}. Press Enter to select and edit its flow.`"
           @mousedown="startCardDrag($event, n.uuid)"
+          @keydown.enter.prevent="selectNode(n.uuid)"
+          @keydown.space.prevent="selectNode(n.uuid)"
         >
           <div class="map-node-top" :class="TOOL_TOP[n.tool] || 'bg-slate-500'"></div>
           <span class="map-port-in"></span>
@@ -721,6 +727,7 @@ onBeforeUnmount(() => {
               :key="key"
               type="button"
               :title="desc"
+              :aria-pressed="selectedNode.triggers.includes(key)"
               class="rounded border px-2 py-0.5 font-mono text-2xs font-semibold select-none transition-colors"
               :class="
                 selectedNode.triggers.includes(key)
@@ -739,12 +746,15 @@ onBeforeUnmount(() => {
           <span class="text-2xs uppercase tracking-wide text-slate-400">prerequisite</span>
           <span v-if="selectedReqName" class="text-sm text-slate-700">
             {{ selectedReqName }}
-            <span
-              class="ml-1 cursor-pointer font-bold text-red-600"
+            <button
+              type="button"
+              class="ml-1 font-bold text-red-600 rounded"
               title="Clear prerequisite"
+              aria-label="Clear prerequisite"
               @click="removeDep(selectedUuid)"
-              >×</span
             >
+              ×
+            </button>
           </span>
           <span v-else class="text-sm text-slate-400 italic"
             >— none — drag a ▸ handle onto it —</span
@@ -763,6 +773,7 @@ onBeforeUnmount(() => {
           type="button"
           class="btn btn-danger btn-sm select-none !border-slate-300"
           title="Delete inject"
+          aria-label="Delete inject"
           @click="deleteSelected()"
         >
           <FontAwesomeIcon :icon="faTrashCan" class="fa-fw"></FontAwesomeIcon>

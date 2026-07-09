@@ -159,6 +159,7 @@ const followedByOptions = computed(() => {
             v-for="(desc, key) in ALLOWED_TRIGGERS"
             :key="key"
             type="button"
+            :aria-pressed="injectFlow.sequence.trigger.includes(key)"
             class="flex flex-col gap-0.5 rounded-lg border px-3 py-2 text-left transition-colors select-none min-w-[9.5rem] basis-[calc(50%-0.25rem)] sm:basis-auto"
             :class="
               injectFlow.sequence.trigger.includes(key)

@@ -19,13 +19,19 @@ const emit = defineEmits(['go'])
 </script>
 
 <template>
-  <div class="flex max-w-3xl select-none">
+  <div class="flex max-w-3xl select-none" role="group" aria-label="Inject editing steps">
     <div
       v-for="(s, i) in steps"
       :key="s.key"
-      class="relative flex-1 flex flex-col gap-1.5 cursor-pointer pb-3 border-b-[3px] transition-colors"
+      role="button"
+      tabindex="0"
+      :aria-current="i === current ? 'step' : undefined"
+      :aria-label="`Step ${i + 1}: ${s.label}${s.issues ? ` — ${s.issues} thing${s.issues > 1 ? 's' : ''} to check` : ''}`"
+      class="relative flex-1 flex flex-col gap-1.5 cursor-pointer pb-3 border-b-[3px] transition-colors rounded-sm"
       :class="i === current ? 'border-blue-600' : 'border-transparent'"
       @click="emit('go', i)"
+      @keydown.enter.prevent="emit('go', i)"
+      @keydown.space.prevent="emit('go', i)"
     >
       <div class="flex items-center gap-2.5">
         <span
