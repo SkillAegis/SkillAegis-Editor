@@ -40,6 +40,14 @@ export const ALLOWED_TRIGGERS = {
   triggered_at: 'Runs once based on the timing function',
 }
 
+// Known keywords for inject_flow.sequence.completion_trigger — the only values
+// used across the shipped scenario library. It is an open-ended string array in
+// the schema, so unknown/custom values are preserved rather than dropped.
+export const COMPLETION_TRIGGER_KEYWORDS = {
+  completion: 'Its evaluation passes',
+  time_expiration: 'Its timing window expires',
+}
+
 export const ALLOWED_TRIGGER_FOR_STRATEGIES = {
   periodic: {
     MISP: ['query_search', 'python'],

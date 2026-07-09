@@ -1,8 +1,8 @@
 <script setup>
-import { faCheck } from '@fortawesome/free-solid-svg-icons'
+import { faCheck, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons'
 
 // A presentational 3-step tracker for the Guided Stepper. Steps look like:
-//   { key, label, sub, done }
+//   { key, label, sub, done, issues }   (issues = count of validation hints)
 // `current` is the active step index; clicking a step emits `go`.
 defineProps({
   steps: {
@@ -32,13 +32,21 @@ const emit = defineEmits(['go'])
           class="w-6 h-6 rounded-full grid place-items-center font-bold text-xs border-2 shrink-0 transition-colors"
           :class="
             i === current
-              ? 'bg-blue-600 border-blue-600 text-white'
-              : s.done
-                ? 'bg-green-100 border-green-500 text-green-600'
-                : 'bg-white border-slate-300 text-slate-500'
+              ? s.issues
+                ? 'bg-blue-600 border-amber-400 text-white ring-2 ring-amber-300'
+                : 'bg-blue-600 border-blue-600 text-white'
+              : s.issues
+                ? 'bg-amber-100 border-amber-400 text-amber-600'
+                : s.done
+                  ? 'bg-green-100 border-green-500 text-green-600'
+                  : 'bg-white border-slate-300 text-slate-500'
           "
         >
-          <FontAwesomeIcon v-if="s.done && i !== current" :icon="faCheck"></FontAwesomeIcon>
+          <FontAwesomeIcon
+            v-if="s.issues && i !== current"
+            :icon="faTriangleExclamation"
+          ></FontAwesomeIcon>
+          <FontAwesomeIcon v-else-if="s.done && i !== current" :icon="faCheck"></FontAwesomeIcon>
           <span v-else>{{ i + 1 }}</span>
         </span>
         <span

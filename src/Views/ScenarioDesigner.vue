@@ -9,8 +9,6 @@ import {
   selectedScenario as originalSelectedScenario
 } from '@/store.js'
 import {
-  faArrowDownWideShort,
-  faArrowUpWideShort,
   faChevronLeft,
   faChevronRight,
   faCirclePlay,
@@ -34,6 +32,10 @@ import {
 } from 'vue'
 import { saveInject, removeInject, saveInjectOrder } from '@/api'
 import { ajaxFeedback, toast } from '@/main'
+import {
+  isComparisonStrategy,
+  conditionsFromParameters,
+} from '@/Views/scenario-designer/evaluationModel.js'
 import StepTracker from '@/Views/scenario-designer/StepTracker.vue'
 import TaskStep from '@/Views/scenario-designer/TaskStep.vue'
 import FlowStep from '@/Views/scenario-designer/FlowStep.vue'
@@ -61,7 +63,7 @@ function maybeSelectFromQuery() {
   }
   if (injectByUUID.value[wanted]) {
     querySelectApplied = true
-    selectInject(wanted)
+    doSelectInject(wanted)
     step.value = 0
     router.replace({ name: 'Scenario Designer', params: { uuid: props.uuid }, query: {} })
   }
@@ -74,11 +76,30 @@ const TOOL_CHIP = {
   webhook: 'bg-violet-600 text-white',
 }
 
+// Set by explicit actions (Cancel) that intend to discard, so the leave prompt
+// below doesn't double-ask.
+let bypassLeaveGuard = false
+
+function hasUnsavedWork() {
+  const dirtySelected = selectedInjectFlowUUID.value && injectDiffersFromSaved.value
+  return Boolean(dirtySelected) || newUnsavedInjects.length > 0
+}
+
+// Warn on hard browser navigation (refresh / tab close) when work is unsaved.
+function beforeUnloadHandler(event) {
+  if (hasUnsavedWork()) {
+    event.preventDefault()
+    event.returnValue = ''
+  }
+}
+
 onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', beforeUnloadHandler)
   resetState()
 })
 
 onMounted(() => {
+  window.addEventListener('beforeunload', beforeUnloadHandler)
   resetState()
   maybeSelectFromQuery()
 })
@@ -92,6 +113,15 @@ watch(
 )
 
 onBeforeRouteLeave(async () => {
+  if (!bypassLeaveGuard && hasUnsavedWork()) {
+    const proceed = window.confirm(
+      'You have unsaved inject changes or new injects that have not been saved. Leave this page and discard them?'
+    )
+    if (!proceed) {
+      return false
+    }
+  }
+  bypassLeaveGuard = false
   newUnsavedInjects.forEach((inject_uuid) => {
     removeInjectFromSelectedScenario(inject_uuid)
   })
@@ -122,17 +152,18 @@ const getFormErrors = computed(() => {
 
 const nameInvalid = computed(() => getFormErrors.value.includes('selectedInject.name'))
 
-const injectMovedPosition = computed(() => {
-  return injectOrderOperations.value.length > 0
-})
-
-const hasValidChanges = computed(() => {
+// True when the selected inject/flow differs from what is persisted. Kept
+// independent of validity so the dirty-state guards (switching inject, leaving
+// the route) still warn about unsaved-but-invalid edits. `hasValidChanges`
+// (which drives the Save button) layers the error check on top.
+const injectDiffersFromSaved = computed(() => {
   if (!selectedInject.value) {
     return false
   }
 
-  if (hasErrors.value) {
-    return false
+  // A freshly created inject that was never persisted is always "dirty".
+  if (newUnsavedInjects.includes(selectedInjectFlowUUID.value)) {
+    return true
   }
 
   const originalSelectedInject = originalSelectedScenario.value.injects.filter(
@@ -266,6 +297,8 @@ const hasValidChanges = computed(() => {
   return false
 })
 
+const hasValidChanges = computed(() => !hasErrors.value && injectDiffersFromSaved.value)
+
 const selectedScenario = computed(() => {
   return originalSelectedScenario.value !== null
     ? JSON.parse(JSON.stringify(originalSelectedScenario.value))
@@ -274,7 +307,6 @@ const selectedScenario = computed(() => {
 
 let originalInject = {}
 let originalInjectFlow = {}
-let injectOrderOperations = ref([])
 const selectedInject = ref(null)
 const selectedInjectFlow = ref(null)
 const selectedInjectFlowUUID = ref(null)
@@ -358,10 +390,69 @@ const completionDone = computed(
   () => (selectedInject.value?.inject_evaluation?.length ?? 0) > 0
 )
 
+/* ---- per-step validation hints (non-blocking, except the name requirement) ---- */
+const taskIssues = computed(() => {
+  const issues = []
+  if (nameInvalid.value) {
+    issues.push('Give the inject a name (at least 2 characters).')
+  }
+  return issues
+})
+
+const flowIssues = computed(() => {
+  const flow = selectedInjectFlow.value
+  if (!flow) {
+    return []
+  }
+  const issues = []
+  const triggers = (flow.sequence?.trigger || []).filter((t) => t && t !== 'null')
+  if (triggers.length === 0) {
+    issues.push('No trigger set — this inject will never start on its own.')
+  }
+  if (triggers.includes('periodic') && !flow.timing?.periodic_run_every) {
+    issues.push('The periodic trigger has no rate set.')
+  }
+  if (triggers.includes('triggered_at') && !flow.timing?.triggered_at) {
+    issues.push('The “triggered at” timing has no delay set.')
+  }
+  const known = new Set(injectList.value.map((i) => i.uuid))
+  const stale = (flow.sequence?.followed_by || []).filter((u) => !known.has(u))
+  if (stale.length > 0) {
+    issues.push(
+      `Advanced chaining refers to ${stale.length} inject${stale.length > 1 ? 's' : ''} that no longer exist${stale.length > 1 ? '' : 's'}.`
+    )
+  }
+  return issues
+})
+
+const completionIssues = computed(() => {
+  const inject = selectedInject.value
+  if (!inject) {
+    return []
+  }
+  const issues = []
+  const evaluations = inject.inject_evaluation || []
+  if (evaluations.length === 0) {
+    issues.push('No evaluation — this inject can’t be scored or auto-completed.')
+  }
+  evaluations.forEach((evaluation, i) => {
+    if (isComparisonStrategy(evaluation.evaluation_strategy)) {
+      const parsed = conditionsFromParameters(evaluation.parameters)
+      if (parsed.ok && parsed.conditions.length === 0) {
+        issues.push(`Evaluation ${i + 1} has no conditions to check.`)
+      }
+    }
+  })
+  return issues
+})
+
+const stepIssues = computed(() => [taskIssues.value, flowIssues.value, completionIssues.value])
+const currentStepIssues = computed(() => stepIssues.value[step.value] || [])
+
 const steps = computed(() => [
-  { ...STEPS[0], done: taskDone.value },
-  { ...STEPS[1], done: flowDone.value },
-  { ...STEPS[2], done: completionDone.value },
+  { ...STEPS[0], done: taskDone.value, issues: taskIssues.value.length },
+  { ...STEPS[1], done: flowDone.value, issues: flowIssues.value.length },
+  { ...STEPS[2], done: completionDone.value, issues: completionIssues.value.length },
 ])
 
 const isLastStep = computed(() => step.value >= STEPS.length - 1)
@@ -393,9 +484,27 @@ const saveState = computed(() => {
   return { tone: 'saved', text: 'All changes saved' }
 })
 
+// Reordering persists immediately (mirrors the Scenario Map's per-edit model),
+// so there is a single "Save Inject" concept and no separate order button.
+// On failure we roll the list back to where it was.
 async function onDragEnd(event) {
-  moveInject(event.oldIndex, event.newIndex)
-  injectOrderOperations.value.push([event.oldIndex, event.newIndex])
+  const { oldIndex, newIndex } = event
+  if (oldIndex === newIndex) {
+    return
+  }
+  await moveInject(oldIndex, newIndex)
+  const injectOrder = inject_flow.value.map((i) => i.inject_uuid)
+  const result = await saveInjectOrder(props.uuid, injectOrder)
+  if (!result.success) {
+    await moveInject(newIndex, oldIndex)
+    if (sortable.value?.sortable) {
+      sortable.value.sortable.sort(
+        inject_flow.value.map((i) => i.inject_uuid),
+        true
+      )
+    }
+  }
+  ajaxFeedback(result)
 }
 
 async function moveInject(from, to) {
@@ -404,7 +513,30 @@ async function moveInject(from, to) {
   selectedScenario.value.inject_flow.splice(to, 0, item)
 }
 
+// Run `action`, but if the current inject has unsaved edits, ask first so we
+// never silently discard them (addresses P5's silent-revert-on-switch).
+function withUnsavedGuard(action, verb) {
+  if (selectedInjectFlowUUID.value && injectDiffersFromSaved.value) {
+    toast({
+      title: 'Discard unsaved changes?',
+      message: `“${selectedInject.value?.name || 'This inject'}” has unsaved changes. ${verb} and discard them?`,
+      variant: 'warning',
+      confirm: true,
+      confirmCb: action,
+    })
+    return
+  }
+  action()
+}
+
 function selectInject(uuid) {
+  if (selectedInjectFlowUUID.value === uuid) {
+    return
+  }
+  withUnsavedGuard(() => doSelectInject(uuid), 'Switch to another inject')
+}
+
+function doSelectInject(uuid) {
   if (selectedInjectFlowUUID.value) {
     revertInjectChanges()
   }
@@ -418,7 +550,6 @@ function selectInject(uuid) {
 function resetState() {
   sortableKey.value += 1
   revertInjectChanges()
-  revertInjectOrderChanges()
   selectedInject.value = null
   selectedInjectFlow.value = null
   selectedInjectFlowUUID.value = null
@@ -432,32 +563,14 @@ function revertInjectChanges() {
   }
 }
 
-async function saveInjectOrderChanges() {
-  const injectOrder = inject_flow.value.map((i) => i.inject_uuid)
-  const result = await saveInjectOrder(props.uuid, injectOrder)
-  ajaxFeedback(result)
-  if (result.success) {
-    injectOrderOperations.value = []
-  }
-}
-
 function cancel() {
+  // Explicit "Cancel" is an intentional discard — skip the leave prompt.
+  bypassLeaveGuard = true
   router.push({ name: 'Scenario Overview', params: { uuid: props.uuid }, props: true })
 }
 
 const sortable = ref()
 const sortableKey = ref(0)
-async function revertInjectOrderChanges() {
-  if (sortable.value?.sortable) {
-    var order = sortable.value.sortable.toArray()
-    injectOrderOperations.value.reverse().forEach(([from, to]) => {
-      const item = order.splice(to, 1)[0]
-      order.splice(from, 0, item)
-    })
-    sortable.value.sortable.sort(order, true)
-    injectOrderOperations.value = []
-  }
-}
 
 async function saveInjectChanges() {
   const injectTosave = JSON.parse(JSON.stringify(selectedInject.value))
@@ -483,6 +596,10 @@ async function saveInjectChanges() {
 }
 
 function createNewInject() {
+  withUnsavedGuard(() => doCreateNewInject(), 'Create a new inject')
+}
+
+function doCreateNewInject() {
   const uuid = uuidv4()
   const newInject = JSON.parse(JSON.stringify(emptyInject))
   newInject.uuid = uuid
@@ -490,7 +607,7 @@ function createNewInject() {
   newInjectFlow.inject_uuid = uuid
   newUnsavedInjects.push(uuid)
   addNewInjectToSelectedScenario(newInject, newInjectFlow)
-  selectInject(uuid)
+  doSelectInject(uuid)
   step.value = 0
 }
 
@@ -543,24 +660,14 @@ function triggerSummary(injectFlow) {
       <div class="flex items-center gap-2 mb-2">
         <h2 class="text-xl font-bold">Injects</h2>
         <span class="text-sm text-slate-400 font-mono">{{ inject_flow.length }}</span>
-        <div class="ml-auto flex gap-1">
-          <button
-            class="btn btn-xs btn-danger select-none"
-            title="Reset inject order"
-            :disabled="!injectMovedPosition"
-            @click="revertInjectOrderChanges()"
-          >
-            <FontAwesomeIcon :icon="faArrowUpWideShort" class="fa-fw"></FontAwesomeIcon>
-          </button>
-          <button
-            :class="`btn btn-xs btn-success select-none ${injectMovedPosition ? 'highlight-success' : ''}`"
-            title="Save inject order"
-            @click="saveInjectOrderChanges()"
-            :disabled="!injectMovedPosition"
-          >
-            <FontAwesomeIcon :icon="faArrowDownWideShort" class="fa-fw"></FontAwesomeIcon> Order
-          </button>
-        </div>
+        <span
+          v-if="inject_flow.length > 1"
+          class="ml-auto text-2xs text-slate-400 select-none"
+          title="Reordering is saved automatically"
+        >
+          <FontAwesomeIcon :icon="faGripVertical" class="fa-fw"></FontAwesomeIcon>
+          drag to reorder
+        </span>
       </div>
 
       <Alert
@@ -680,6 +787,21 @@ function triggerSummary(injectFlow) {
 
         <!-- step panel -->
         <div class="grow py-4">
+          <!-- non-blocking validation hints for the active step -->
+          <div
+            v-if="currentStepIssues.length > 0"
+            class="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+          >
+            <div class="flex items-center gap-2 font-semibold">
+              <FontAwesomeIcon :icon="faTriangleExclamation" class="fa-fw"></FontAwesomeIcon>
+              {{ currentStepIssues.length }}
+              thing{{ currentStepIssues.length > 1 ? 's' : '' }} to check on this step
+            </div>
+            <ul class="mt-1 ml-6 list-disc space-y-0.5 text-amber-700">
+              <li v-for="(issue, i) in currentStepIssues" :key="i">{{ issue }}</li>
+            </ul>
+          </div>
+
           <TaskStep
             v-if="step === 0"
             v-model:inject="selectedInject"
@@ -687,6 +809,7 @@ function triggerSummary(injectFlow) {
           ></TaskStep>
           <FlowStep
             v-else-if="step === 1"
+            :key="selectedInjectFlowUUID"
             v-model:inject-flow="selectedInjectFlow"
             :target-tool="selectedInject.target_tool"
             :injects="injectList"
