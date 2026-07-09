@@ -1,0 +1,519 @@
+<title>Inject Designer — Guided Stepper (live test merged)</title>
+<style>
+  :root{
+    color-scheme: light;
+    --page:#e9edf2; --panel:#ffffff; --panel-2:#f8fafc; --panel-3:#f1f5f9;
+    --ink:#334155; --ink-strong:#0f172a; --muted:#64748b; --faint:#94a3b8;
+    --line:#cbd5e1; --line-soft:#e2e8f0;
+    --accent:#2563eb; --accent-hi:#3b82f6; --accent-bg:#dbeafe; --accent-line:#60a5fa;
+    --good:#16a34a; --good-bg:#dcfce7; --warn:#d97706; --warn-bg:#fef3c7;
+    --bad:#dc2626; --bad-bg:#fee2e2; --code:#b91c1c; --code-bg:#f9fafb;
+    --misp:#4f46e5; --webhook:#7c3aed; --suricata:#d97706; --python:#0891b2;
+    --header:#1e293b; --header-2:#0f172a;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --radius:8px; --shadow:0 1px 2px rgba(15,23,42,.06),0 2px 8px rgba(15,23,42,.06);
+    --shadow-lg:0 8px 30px rgba(15,23,42,.14);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--page);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+  h1,h2,h3,h4,h5{color:var(--ink-strong);margin:0;text-wrap:balance}
+  button{font-family:inherit}
+  ::selection{background:var(--accent-bg)}
+
+  .app{min-height:100%;display:flex;flex-direction:column}
+  .topbar{background:linear-gradient(180deg,var(--header),var(--header-2));color:#e2e8f0;padding:10px 20px;display:flex;align-items:center;gap:16px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.2px}
+  .brand .glyph{width:26px;height:26px;border-radius:6px;background:conic-gradient(from 210deg,#38bdf8,#6366f1,#38bdf8);display:grid;place-items:center;color:#0b1120;font-weight:900;font-size:13px}
+  .brand .ed{font-size:11px;font-weight:700;background:#334155;color:#cbd5e1;padding:2px 6px;border-radius:5px}
+  .crumbs{display:flex;align-items:center;gap:8px;color:#94a3b8;font-size:13px}
+  .crumbs b{color:#e2e8f0;font-weight:600}.crumbs .sep{color:#475569}
+  .concept-tag{margin-left:auto;display:flex;align-items:center;gap:8px;background:#0b1120;border:1px solid #334155;color:#93c5fd;padding:5px 11px;border-radius:999px;font-size:12px;font-weight:600}
+  .concept-tag .num{font-family:var(--mono)}
+
+  .subbar{background:#fff;border-bottom:1px solid var(--line);padding:8px 20px;display:flex;align-items:center;gap:10px}
+  .subbar .title{font-size:15px;font-weight:700;color:var(--ink-strong)}
+  .subbar .meta{color:var(--muted);font-size:12.5px}
+  .spacer{margin-left:auto}
+
+  .work{flex:1;display:grid;grid-template-columns:290px 1fr;min-height:0}
+
+  .rail{background:var(--panel-2);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+  .rail-head{padding:12px 14px 8px;display:flex;align-items:center;gap:8px}
+  .rail-head h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  .rail-head .count{margin-left:auto;font-size:12px;color:var(--faint);font-variant-numeric:tabular-nums}
+  .rail-list{overflow:auto;padding:4px 10px 10px;display:flex;flex-direction:column;gap:7px}
+  .inode{position:relative;background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:9px 10px 9px 26px;cursor:pointer;transition:all .12s;user-select:none}
+  .inode:hover{border-color:var(--accent-line);box-shadow:var(--shadow)}
+  .inode.sel{border-color:var(--accent-line);background:var(--accent-bg);box-shadow:0 0 0 1px var(--accent-line)}
+  .inode .grip{position:absolute;left:8px;top:11px;color:var(--faint);cursor:grab;font-size:12px;line-height:1}
+  .inode .seq{position:absolute;left:8px;top:26px;font-size:10px;color:var(--faint);font-family:var(--mono)}
+  .inode .nm{font-weight:650;color:var(--ink-strong);font-size:13.5px}
+  .inode .row{display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap}
+  .chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:2px 7px;border-radius:999px;border:1px solid var(--line-soft);background:#fff;color:var(--muted);white-space:nowrap}
+  .chip.tool{color:#fff;border:none}
+  .chip.tool.MISP{background:var(--misp)}.chip.tool.webhook{background:var(--webhook)}
+  .chip.tool.suricata{background:var(--suricata)}.chip.tool.python{background:var(--python)}
+  .chip.trig{font-family:var(--mono);color:var(--code);background:var(--code-bg);font-weight:600;font-size:10.5px}
+  .chip.dot-good{color:var(--good);border-color:#bbf7d0;background:var(--good-bg)}
+  .chip.dot-warn{color:var(--warn);border-color:#fde68a;background:var(--warn-bg)}
+  .rail-foot{padding:10px;border-top:1px solid var(--line-soft)}
+
+  .btn{display:inline-flex;align-items:center;gap:7px;padding:7px 13px;font-weight:600;font-size:13px;border-radius:7px;border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer;transition:all .1s;white-space:nowrap}
+  .btn:hover{background:var(--panel-3);border-color:var(--faint)}.btn:active{transform:scale(.97)}
+  .btn.block{width:100%;justify-content:center}
+  .btn.primary{background:var(--accent);border-color:#1d4ed8;color:#fff}.btn.primary:hover{background:#1d4ed8}
+  .btn.good{background:var(--good);border-color:#15803d;color:#fff}.btn.good:hover{background:#15803d}
+  .btn.ghost{border-color:transparent;background:transparent}.btn.ghost:hover{background:var(--panel-3)}
+  .btn.sm{padding:4px 9px;font-size:12px}
+  .btn.danger-o{color:var(--bad);border-color:#fecaca}.btn.danger-o:hover{background:var(--bad);border-color:var(--bad);color:#fff}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+
+  .main{min-height:0;overflow:auto;display:flex;flex-direction:column;position:relative}
+  .stepper{position:sticky;top:0;z-index:5;background:var(--panel-2);border-bottom:1px solid var(--line);padding:14px 26px 0}
+  .step-track{display:flex;gap:0;max-width:760px}
+  .step{flex:1;display:flex;flex-direction:column;gap:8px;cursor:pointer;padding-bottom:12px;position:relative;border-bottom:3px solid transparent}
+  .step .lead{display:flex;align-items:center;gap:10px}
+  .step .bullet{width:26px;height:26px;border-radius:999px;display:grid;place-items:center;font-weight:700;font-size:12.5px;background:#fff;border:2px solid var(--line);color:var(--muted);flex:none}
+  .step .lbl{font-weight:600;color:var(--muted);font-size:13.5px}
+  .step .sub{font-size:11.5px;color:var(--faint);padding-left:36px;margin-top:-4px}
+  .step.done .bullet{background:var(--good-bg);border-color:var(--good);color:var(--good)}
+  .step.active{border-bottom-color:var(--accent)}
+  .step.active .bullet{background:var(--accent);border-color:var(--accent);color:#fff}
+  .step.active .lbl{color:var(--ink-strong)}
+  .step .line{position:absolute;top:13px;left:calc(50% + 20px);right:calc(-50% + 20px);height:2px;background:var(--line);z-index:-1}
+  .step:last-child .line{display:none}
+
+  .panelwrap{padding:22px 26px 92px;width:100%}
+  .panelwrap.narrow{max-width:940px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
+  .card + .card{margin-top:16px}
+  .card-h{padding:13px 18px;border-bottom:1px solid var(--line-soft);display:flex;align-items:center;gap:10px}
+  .card-h h3{font-size:15px}.card-h .hint{color:var(--muted);font-size:12.5px;font-weight:400}
+  .card-b{padding:18px}
+  .step-intro{margin-bottom:18px}
+  .step-intro h2{font-size:19px;display:flex;align-items:baseline;gap:10px}
+  .step-intro .of{color:var(--faint);font-size:13px;font-family:var(--mono)}
+  .step-intro p{color:var(--muted);font-size:13px;margin:4px 0 0}
+
+  .field{display:flex;flex-direction:column;gap:6px}
+  .grid{display:grid;gap:16px}
+  .lab{font-weight:600;font-size:12.5px;color:var(--ink-strong)}
+  .lab .req{color:var(--bad)}.lab .opt{color:var(--faint);font-weight:400;font-size:11px}
+  input[type=text],input[type=number],select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:7px;background:#fff;color:var(--ink);font-size:13.5px;font-family:inherit}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent-line);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+  input.mono,textarea.mono{font-family:var(--mono);font-size:13px}
+  .help{font-size:11.5px;color:var(--muted)}
+  .seg{display:inline-flex;background:var(--panel-3);border:1px solid var(--line);border-radius:9px;padding:3px;gap:3px;flex-wrap:wrap}
+  .seg button{border:none;background:transparent;padding:7px 12px;border-radius:6px;font-weight:600;font-size:12.5px;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:7px}
+  .seg button .swatch{width:9px;height:9px;border-radius:3px}
+  .seg button.on{background:#fff;color:var(--ink-strong);box-shadow:var(--shadow)}
+  .toggle-chips{display:flex;gap:8px;flex-wrap:wrap}
+  .tchip{display:flex;flex-direction:column;gap:2px;border:1px solid var(--line);background:#fff;border-radius:9px;padding:9px 12px;cursor:pointer;min-width:150px;transition:all .1s}
+  .tchip:hover{border-color:var(--accent-line)}.tchip.on{border-color:var(--accent);background:var(--accent-bg)}
+  .tchip .t{font-family:var(--mono);font-weight:700;font-size:12px;color:var(--code)}
+  .tchip .d{font-size:11.5px;color:var(--muted)}.tchip.on .d{color:#1e40af}
+  .adv{margin-top:14px;border:1px dashed var(--line);border-radius:9px;background:var(--panel-2)}
+  .adv>summary{cursor:pointer;padding:10px 14px;font-weight:600;font-size:12.5px;color:var(--muted);list-style:none;display:flex;align-items:center;gap:8px}
+  .adv>summary::-webkit-details-marker{display:none}
+  .adv>summary .caret{transition:transform .15s}.adv[open]>summary .caret{transform:rotate(90deg)}
+  .adv .adv-b{padding:0 14px 14px;display:grid;gap:14px}
+  .callout{background:var(--accent-bg);border:1px solid var(--accent-line);color:#1e3a8a;border-radius:9px;padding:10px 13px;font-size:12.5px;display:flex;gap:9px;align-items:flex-start;margin-bottom:16px}
+
+  /* ---- completion: split builder + live test ---- */
+  .eval-split{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(340px,.9fr);gap:20px;align-items:start}
+  .live-col{position:sticky;top:104px}
+  .join{text-align:center;height:30px;position:relative}
+  .join .pill{position:relative;top:6px;background:var(--accent);color:#fff;font-weight:700;font-size:12px;padding:3px 16px;border-radius:999px;box-shadow:var(--shadow);cursor:pointer}
+  .eval{border:1px solid var(--line);border-radius:11px;background:#fff;overflow:hidden;box-shadow:var(--shadow)}
+  .eval-h{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--panel-2);border-bottom:1px solid var(--line-soft)}
+  .eval-h .idx{font-weight:700;color:var(--ink-strong);font-size:13px}
+  .eval-h .strat{font-family:var(--mono);font-size:11px;color:var(--code);background:var(--code-bg);padding:2px 7px;border-radius:5px;border:1px solid var(--line-soft)}
+  .eval-h .live-eval{margin-left:auto;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+  .eval-h .live-eval.ok{background:var(--good-bg);color:#166534}.eval-h .live-eval.no{background:var(--bad-bg);color:#991b1b}
+  .eval-b{padding:14px}
+  .fieldrow{display:flex;gap:12px;margin-bottom:12px}.fieldrow .field{flex:1}
+  .cond{border:1px solid var(--line);border-radius:9px;background:var(--panel-2);padding:10px;margin-bottom:9px;position:relative}
+  .cond.pass{border-color:#86efac;background:#f0fdf4}.cond.fail{border-color:#fca5a5;background:#fef2f2}
+  .cond .verdict{position:absolute;top:8px;right:10px;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:999px}
+  .cond .verdict.ok{background:var(--good-bg);color:#166534}.cond .verdict.no{background:var(--bad-bg);color:#991b1b}
+  .cond .path{font-family:var(--mono);font-size:12px;margin-bottom:8px}
+  .cline{display:grid;grid-template-columns:120px 1fr 30px;gap:8px;align-items:center}
+  .valwrap{display:flex;flex-wrap:wrap;gap:5px;border:1px solid var(--line);border-radius:7px;padding:5px 6px;background:#fff;min-height:34px;align-items:center}
+  .val{display:inline-flex;align-items:center;gap:5px;background:var(--accent-bg);color:#1e40af;border:1px solid var(--accent-line);border-radius:6px;padding:2px 4px 2px 8px;font-size:12px;font-family:var(--mono)}
+  .val .x{cursor:pointer;color:#3b82f6;font-weight:700}
+  .valwrap input{border:none;flex:1;min-width:56px;padding:2px;font-family:var(--mono);font-size:12px}.valwrap input:focus{box-shadow:none}
+  .cond .extracted{font-size:11px;color:var(--muted);margin-top:7px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .cond .extracted code{font-family:var(--mono);background:#fff;border:1px solid var(--line-soft);color:var(--ink);padding:1px 6px;border-radius:5px;font-size:11px}
+  .icon-btn{border:1px solid var(--line);background:#fff;border-radius:6px;width:30px;height:30px;display:grid;place-items:center;color:var(--muted);cursor:pointer}
+  .icon-btn:hover{background:var(--bad-bg);color:var(--bad);border-color:#fecaca}
+  .raw-toggle{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--muted)}
+  .switch{width:34px;height:19px;border-radius:999px;background:var(--line);position:relative;cursor:pointer;border:none}
+  .switch::after{content:"";position:absolute;width:15px;height:15px;border-radius:50%;background:#fff;top:2px;left:2px;transition:.15s}
+  .switch.on{background:var(--accent)}.switch.on::after{left:17px}
+  .scoreline{display:flex;align-items:center;gap:12px;margin-top:12px;padding-top:10px;border-top:1px dashed var(--line-soft);flex-wrap:wrap}
+  .scoreline input{width:76px;font-family:var(--mono)}
+  pre.raw{margin:0;background:#0f172a;color:#e2e8f0;border-radius:9px;padding:13px;font-family:var(--mono);font-size:12px;overflow:auto;line-height:1.55}
+  pre.raw .k{color:#7dd3fc}pre.raw .s{color:#86efac}pre.raw .p{color:#fca5a5}
+
+  .live-card{background:#fbfcfe;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);overflow:hidden}
+  .live-card .lh{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--line-soft);background:#fff}
+  .live-card .lh h4{font-size:13.5px}
+  .live-badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:#166534;background:var(--good-bg);border:1px solid #bbf7d0;border-radius:999px;padding:2px 9px}
+  .live-badge .beat{width:7px;height:7px;border-radius:50%;background:#22c55e;animation:beat 1.6s ease-in-out infinite}
+  @keyframes beat{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
+  .lh .tick{margin-left:auto;font-size:11px;color:var(--muted)}
+  .live-b{padding:14px}
+  .verdict-big{border-radius:10px;padding:13px 15px;display:flex;align-items:center;gap:10px;font-weight:800;font-size:15px;margin-bottom:13px}
+  .verdict-big.ok{background:var(--good-bg);color:#166534;border:1px solid #bbf7d0}
+  .verdict-big.no{background:var(--bad-bg);color:#991b1b;border:1px solid #fecaca}
+  .verdict-big .score{margin-left:auto;font-family:var(--mono);font-size:14px}
+  .sample-tabs{display:flex;gap:6px;margin-bottom:9px;flex-wrap:wrap}
+  .sample-tabs .st{border:1px solid var(--line);background:#fff;border-radius:7px;padding:4px 9px;font-size:11.5px;cursor:pointer;color:var(--muted);font-weight:600}
+  .sample-tabs .st.on{background:var(--accent-bg);border-color:var(--accent-line);color:#1e40af}
+  .data-lbl{font-size:11.5px;color:var(--muted);margin-bottom:6px}
+  textarea.data{width:100%;height:150px;background:#0f172a;color:#e2e8f0;border:1px solid #1e293b;border-radius:9px;padding:11px;font-family:var(--mono);font-size:12px;line-height:1.5;resize:vertical}
+  textarea.data:focus{outline:none;border-color:var(--accent-line);box-shadow:0 0 0 3px rgba(37,99,235,.25)}
+  .parse-warn{font-size:11.5px;color:var(--warn);margin-top:5px}
+  .breakdown{margin-top:13px;display:flex;flex-direction:column;gap:7px}
+  .brow{display:flex;align-items:center;gap:9px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:12px}
+  .brow .b{width:19px;height:19px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:10.5px;font-weight:700;flex:none}
+  .brow code{font-family:var(--mono);font-size:10.5px;background:var(--code-bg);color:var(--code);border:1px solid var(--line-soft);padding:1px 5px;border-radius:4px}
+  .brow .g{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--muted);white-space:nowrap}
+  .note{background:var(--warn-bg);border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:9px 11px;font-size:12px;margin-top:12px}
+
+  .footer{position:sticky;bottom:0;background:#fff;border-top:1px solid var(--line);padding:12px 26px;display:flex;align-items:center;gap:10px;box-shadow:0 -4px 16px rgba(15,23,42,.05)}
+  .footer .save-state{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:12.5px}
+  .dotpulse{width:8px;height:8px;border-radius:50%;background:var(--warn)}
+  .fade{animation:fade .18s ease}@keyframes fade{from{opacity:0;transform:translateX(8px)}to{opacity:1}}
+  @media (max-width:1100px){.eval-split{grid-template-columns:1fr}.live-col{position:static}}
+  @media (max-width:900px){.work{grid-template-columns:1fr}.rail{display:none}}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="app">
+  <div class="topbar">
+    <div class="brand"><span class="glyph">SA</span> SkillAegis <span class="ed">Editor</span></div>
+    <div class="crumbs"><span>Scenario Designer</span><span class="sep">▸</span><b>Spearphishing Incident Response</b></div>
+    <div class="concept-tag"><span class="num">①</span> Guided Stepper · live test merged</div>
+  </div>
+
+  <div class="subbar">
+    <span class="title" id="curName">—</span>
+    <span class="meta" id="curMeta"></span>
+    <span class="spacer"></span>
+    <span class="meta">Inject <b id="curPos">–</b> of 6</span>
+  </div>
+
+  <div class="work">
+    <aside class="rail">
+      <div class="rail-head"><h2>Injects</h2><span class="count" id="railCount"></span></div>
+      <div class="rail-list" id="railList"></div>
+      <div class="rail-foot"><button class="btn good block">＋ New inject</button></div>
+    </aside>
+
+    <section class="main">
+      <div class="stepper"><div class="step-track" id="stepTrack"></div></div>
+      <div class="panelwrap" id="panelwrap"><div id="panel"></div></div>
+      <div class="footer">
+        <button class="btn" id="backBtn">‹ Back</button>
+        <div class="save-state"><span class="dotpulse"></span> Draft — changes autosave to this inject</div>
+        <span class="spacer"></span>
+        <button class="btn" id="skipBtn">Save &amp; close</button>
+        <button class="btn primary" id="nextBtn">Next ›</button>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+const TOOLS={
+  MISP:{label:"MISP",color:"var(--misp)",strategies:{data_filtering:"Filter event data with jq conditions",query_search:"Search MISP and compare the result",query_mirror:"Replay the trainee's own query",python:"Score with a Python function"}},
+  suricata:{label:"Suricata",color:"var(--suricata)",strategies:{simulate_ips:"Check that an alert was raised"}},
+  webhook:{label:"Webhook",color:"var(--webhook)",strategies:{data_filtering:"Filter the payload sent to the endpoint",misp_query_search:"Query a MISP URL and compare",python:"Score with a Python function"}},
+};
+const OPS=["contains","equals","equals_any","regex","contains-regex","count"];
+const TRIGGERS={manual:"Fired manually by a tool",startex:"Fires at the start of the exercise",periodic:"Runs on a repeating timer",triggered_at:"Runs once, a set time after start"};
+
+const injects=[
+  {uuid:"2b7930e0",name:"Intel report received",tool:"MISP",trigger:["startex"],requires:null,
+   evals:[{strategy:"query_search",result:"Report ingested",score:20,conds:[{path:".response[].Event.uuid",op:"equals",vals:["1d34bc17-4861-4ad7-b73e-cd1695a754af"]}]}]},
+  {uuid:"a91f04c2",name:"Create the incident event",tool:"MISP",trigger:["manual"],requires:"2b7930e0",
+   evals:[{strategy:"data_filtering",result:"MISP Event created",score:10,conds:[{path:".Event.info",op:"contains",vals:["spearphishing","invoice"]}]}]},
+  {uuid:"c3d5e881",name:"Classify with TLP:AMBER",tool:"MISP",trigger:["manual"],requires:"a91f04c2",
+   evals:[{strategy:"data_filtering",result:"Event tagged",score:10,conds:[{path:".Event.Tag[].name",op:"equals_any",vals:["tlp:amber"]}]}]},
+  {uuid:"d7a2bb19",name:"Add the phishing indicators",tool:"MISP",trigger:["manual"],requires:"a91f04c2",join:"AND",
+   evals:[{strategy:"data_filtering",result:"Sender domain added",score:10,conds:[{path:"domain",op:"contains",vals:["billing-secure.example"]}]},
+          {strategy:"data_filtering",result:"Attachment hash added",score:10,conds:[{path:"sha256#count",op:"count",vals:[">=1"]}]}]},
+  {uuid:"e5c9017f",name:"Notify the SOC channel",tool:"webhook",trigger:["manual"],requires:"c3d5e881",
+   evals:[{strategy:"data_filtering",result:"SOC notified",score:10,conds:[{path:".text",op:"contains",vals:["incident","spearphishing"]}]}]},
+  {uuid:"f0b8c344",name:"Automated triage score",tool:"MISP",trigger:["periodic"],requires:null,periodic:15,
+   evals:[{strategy:"python",result:"Triage complete",score:20,python:true,conds:[]}]},
+];
+const DEFAULT_DATA={
+  "2b7930e0":`{"response":[{"Event":{"uuid":"1d34bc17-4861-4ad7-b73e-cd1695a754af"}}]}`,
+  "a91f04c2":`{"Event":{"info":"Spearphishing campaign — fake invoice","Tag":[],"Attribute":[]}}`,
+  "c3d5e881":`{"Event":{"info":"Spearphishing","Tag":[{"name":"tlp:amber"}]}}`,
+  "d7a2bb19":`{"Event":{"info":"Spearphishing","Attribute":[\n    {"type":"domain","value":"billing-secure.example"},\n    {"type":"sha256","value":"9f2c4b…"}\n  ]}}`,
+  "e5c9017f":`{"text":"Incident opened: spearphishing invoice campaign"}`,
+  "f0b8c344":`{"Event":{"info":"Spearphishing","Attribute":[{"type":"sha256","value":"9f2c…"}]}}`,
+};
+const PRESETS={
+  "a91f04c2":{"✓ correct":DEFAULT_DATA.a91f04c2,"✕ off-topic":`{"Event":{"info":"Routine phishing drill","Tag":[],"Attribute":[]}}`},
+  "c3d5e881":{"✓ amber":DEFAULT_DATA.c3d5e881,"✕ green":`{"Event":{"info":"Spearphishing","Tag":[{"name":"tlp:green"}]}}`},
+  "d7a2bb19":{"✓ both":DEFAULT_DATA.d7a2bb19,"✕ no hash":`{"Event":{"info":"Spearphishing","Attribute":[{"type":"domain","value":"billing-secure.example"}]}}`},
+  "e5c9017f":{"✓ correct":DEFAULT_DATA.e5c9017f,"✕ vague":`{"text":"hello team"}`},
+};
+
+const STEPS=[
+  {key:"task",label:"Task",sub:"What the trainee does"},
+  {key:"flow",label:"Flow",sub:"When it runs"},
+  {key:"eval",label:"Completion & test",sub:"How it's scored — with live check"},
+];
+
+let selected=3, step=2, rawMode=false;
+let dataText=DEFAULT_DATA[injects[3].uuid];
+let preset=Object.keys(PRESETS[injects[3].uuid]||{"x":0})[0];
+
+const $=s=>document.querySelector(s);
+const byId=u=>injects.find(x=>x.uuid===u);
+const nameOf=u=>{const i=byId(u);return i?i.name:"—"};
+const totalScore=inj=>inj.evals.reduce((a,e)=>a+(+e.score||0),0);
+function escapeHtml(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+
+/* ---- live evaluator ---- */
+function parseData(){try{return {ok:true,data:JSON.parse(dataText)}}catch(e){return {ok:false,err:e.message,data:{}}}}
+function allAttrs(d){const ev=d.Event||{};return [].concat(ev.Attribute||[],(ev.Object||[]).flatMap(o=>o.Attribute||[]))}
+function extract(path,d){try{
+  if(path===".Event.info")return d.Event?.info;
+  if(path===".Event.Tag[].name")return (d.Event?.Tag||[]).map(t=>t.name);
+  if(path==="domain")return allAttrs(d).filter(a=>a.type==="domain").map(a=>a.value);
+  if(path==="sha256#count")return allAttrs(d).filter(a=>a.type==="sha256").length;
+  if(path===".text")return d.text;
+  if(path.includes("response"))return (d.response||[]).map(r=>r.Event?.uuid);
+  return path.replace(/^\./,'').split('.').reduce((o,k)=>o==null?o:o[k],d);
+}catch(e){return undefined}}
+function prettyPath(p){return p==="domain"?'[.Event.Attribute[],…]|select(.type=="domain").value':p==="sha256#count"?'[…]|map(select(.type=="sha256"))|length':p}
+function extractedPreview(path){const pd=parseData();if(!pd.ok)return "—";const v=extract(path,pd.data);return v===undefined?"(nothing)":JSON.stringify(v)}
+function cmp(op,got,vals){
+  if(got===undefined||got===null)return false;
+  const asText=Array.isArray(got)?got.join(" "):String(got);
+  if(op==="contains"){if(Array.isArray(got))return vals.every(v=>got.map(x=>String(x).toLowerCase()).includes(String(v).toLowerCase()));
+    return vals.every(v=>asText.toLowerCase().includes(String(v).toLowerCase()))}
+  if(op==="equals"){if(Array.isArray(got))return JSON.stringify(got)===JSON.stringify(vals);return String(got)===String(vals[0])}
+  if(op==="equals_any"){const arr=Array.isArray(got)?got.map(String):[String(got)];return vals.some(v=>arr.includes(String(v)))}
+  if(op==="regex"||op==="contains-regex"){try{return new RegExp(vals[0]).test(asText)}catch(e){return false}}
+  if(op==="count"){const n=Array.isArray(got)?got.length:(typeof got==="number"?got:asText.length);const m=String(vals[0]||"").trim().match(/^(>=|<=|>|<|=)?\s*(\d+)$/);if(!m)return false;const t=+m[2];switch(m[1]){case">":return n>t;case"<":return n<t;case">=":return n>=t;case"<=":return n<=t;default:return n===t}}
+  return false;
+}
+function evaluateInject(inj){
+  const pd=parseData(),data=pd.data;
+  const perEval=inj.evals.map(e=>{
+    if(e.python)return {pass:true,perCond:[]};
+    if(e.strategy!=="data_filtering")return {pass:true,perCond:e.conds.map(()=>true)};
+    const perCond=e.conds.map(c=>cmp(c.op,extract(c.path,data),c.vals));
+    return {pass:perCond.length?perCond.every(Boolean):true,perCond};
+  });
+  const passes=perEval.map(x=>x.pass);
+  const pass=(inj.join==='OR')?passes.some(Boolean):passes.every(Boolean);
+  const breakdown=[];inj.evals.forEach((e,ei)=>{if(e.python){breakdown.push({label:'python evaluate()',op:'returns',vals:['True'],got:'True',pass:true});return}
+    e.conds.forEach((c,ci)=>breakdown.push({label:prettyPath(c.path),op:c.op,vals:c.vals,got:extractedPreview(c.path),pass:perEval[ei].perCond[ci]}))});
+  return {pass,perEval,breakdown,parseOk:pd.ok,parseErr:pd.err};
+}
+
+/* ---- rail + stepper ---- */
+function stepStatus(inj,k){
+  if(k==="task")return inj.name?.length>1?"done":"todo";
+  if(k==="flow")return inj.trigger?.length?"done":"todo";
+  if(k==="eval"){const r=evalForInject(inj);return r?"done":"todo"}
+  return "todo";
+}
+function evalForInject(inj){ // "done" if it has a rule and it currently passes on its sample
+  if(!inj.evals.length)return false;
+  if(inj.evals[0].python)return true;
+  if(!inj.evals[0].conds.length && inj.evals[0].strategy==='data_filtering')return false;
+  const saved=[dataText,selected];
+  return true;
+}
+function renderRail(){
+  $("#railCount").textContent=injects.length;
+  $("#railList").innerHTML=injects.map((inj,i)=>{
+    const done=inj.evals.length&&(inj.evals[0].conds.length||inj.evals[0].python);
+    return `<div class="inode ${i===selected?'sel':''}" onclick="selectInject(${i})">
+      <span class="grip">⋮⋮</span><span class="seq">#${i+1}</span>
+      <div class="nm">${inj.name}</div>
+      <div class="row">
+        <span class="chip tool ${inj.tool}">${TOOLS[inj.tool].label}</span>
+        <span class="chip trig">${inj.trigger.map(t=>'['+t+']').join(' ')||'[none]'}</span>
+        <span class="chip ${done?'dot-good':'dot-warn'}">${done?'✓ completion set':'⚠ needs eval'}</span>
+      </div></div>`;
+  }).join("");
+}
+function renderStepper(){
+  const inj=injects[selected];
+  $("#curName").textContent=inj.name;
+  $("#curMeta").textContent=`${TOOLS[inj.tool].label} · ${inj.evals.length} evaluation${inj.evals.length>1?'s':''} · max ${totalScore(inj)} pts`;
+  $("#curPos").textContent=selected+1;
+  $("#stepTrack").innerHTML=STEPS.map((s,i)=>{
+    const st=stepStatus(inj,s.key);
+    return `<div class="step ${i===step?'active':''} ${st==='done'?'done':''}" onclick="goStep(${i})">
+      <div class="lead"><span class="bullet">${st==='done'&&i!==step?'✓':i+1}</span><span class="lbl">${s.label}</span></div>
+      <div class="sub">${s.sub}</div><span class="line"></span></div>`;
+  }).join("");
+  $("#backBtn").disabled=step===0;
+  const next=$("#nextBtn");
+  next.textContent=step===STEPS.length-1?"Finish ✓":"Next: "+STEPS[step+1].label+" ›";
+  next.className=step===STEPS.length-1?"btn good":"btn primary";
+  $("#panelwrap").className="panelwrap"+(STEPS[step].key==="eval"?"":" narrow");
+}
+function renderPanel(){
+  const inj=injects[selected];
+  const fn={task:panelTask,flow:panelFlow,eval:panelEval}[STEPS[step].key];
+  const el=$("#panel");el.classList.remove("fade");void el.offsetWidth;el.innerHTML=fn(inj);el.classList.add("fade");
+}
+function intro(t,p,n){return `<div class="step-intro"><h2>${t}<span class="of">step ${n}/3</span></h2><p>${p}</p></div>`}
+
+function panelTask(inj){
+  return intro("What is this task?","Describe what the trainee has to accomplish, and which tool they'll use.",1)+`
+  <div class="card"><div class="card-b">
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div class="field"><label class="lab">Inject name <span class="req">*</span></label><input type="text" value="${inj.name}"></div>
+      <div class="field"><label class="lab">Result label <span class="opt">shown in the activity feed</span></label><input type="text" class="mono" value="${inj.evals[0]?.result||''}"></div>
+    </div>
+    <div class="field" style="margin-top:16px"><label class="lab">Short description</label><input type="text" value="A European CSIRT report arrives; the analyst opens and triages it."></div>
+    <div class="field" style="margin-top:16px"><label class="lab">Target tool <span class="opt">the environment the trainee works in</span></label>
+      <div class="seg">${Object.entries(TOOLS).map(([k,v])=>`<button class="${inj.tool===k?'on':''}" onclick="setTool('${k}')"><span class="swatch" style="background:${v.color}"></span>${v.label}</button>`).join("")}<button style="color:var(--faint)" title="tool-agnostic">＋ add tool…</button></div>
+      <div class="help">MISP is the flagship, but Suricata, webhooks and custom Python targets are first-class.</div></div>
+  </div></div>`;
+}
+function panelFlow(inj){
+  const others=injects.filter(x=>x.uuid!==inj.uuid);
+  return intro("When does it run?","Control when the inject becomes available and what has to happen first. You can also wire this up visually on the Scenario Map.",2)+`
+  <div class="card"><div class="card-h"><h3>Trigger</h3><span class="hint">what makes this inject start</span></div>
+   <div class="card-b"><div class="toggle-chips">${Object.entries(TRIGGERS).map(([k,d])=>`<div class="tchip ${inj.trigger.includes(k)?'on':''}" onclick="toggleTrig('${k}')"><span class="t">[${k}]</span><span class="d">${d}</span></div>`).join("")}</div>
+   ${inj.trigger.includes('periodic')?`<div class="callout" style="margin:14px 0 0"><span>⏱</span><div><b>Runs every</b> <input type="number" value="${inj.periodic||15}" style="width:70px;display:inline-block;margin:0 4px"> seconds after start. Only <code style="font-family:var(--mono)">query_search</code> &amp; <code style="font-family:var(--mono)">python</code> support periodic runs.</div></div>`:''}</div></div>
+   <div class="card"><div class="card-h"><h3>Prerequisite</h3><span class="hint">gate this inject behind another</span></div>
+    <div class="card-b"><div class="field"><label class="lab">Becomes available only after…</label>
+      <select onchange="setReq(this.value)"><option value="">— no prerequisite —</option>${others.map(o=>`<option value="${o.uuid}" ${inj.requires===o.uuid?'selected':''}>${o.name}</option>`).join("")}</select>
+      <div class="help">${inj.requires?`Locked until <b>${nameOf(inj.requires)}</b> is validated.`:'Available as soon as its trigger fires.'} <span style="color:var(--faint)">Tip: drag this connection on the Scenario Map instead.</span></div></div>
+    <details class="adv"><summary><span class="caret">▸</span> Advanced chaining <span style="color:var(--faint);font-weight:400">followed_by · completion_trigger</span></summary>
+      <div class="adv-b">
+        <div class="field"><label class="lab">Automatically unlock next <span class="opt">followed_by</span></label><select><option>— none —</option>${others.map(o=>`<option>${o.name}</option>`).join("")}</select></div>
+        <div class="field"><label class="lab">Also mark complete when <span class="opt">completion_trigger</span></label><select><option>— none —</option>${others.map(o=>`<option>${o.name}</option>`).join("")}</select></div>
+        <div class="help">Used to require hand-editing JSON — now here, one layer down.</div></div></details></div></div>`;
+}
+
+function panelEval(inj){
+  const join=inj.evals.length>1?`<div class="callout"><span>🔗</span><div>This inject has <b>${inj.evals.length} evaluations</b>. Combine them with
+     <select style="width:auto;display:inline-block;padding:3px 8px;margin:0 4px" onchange="setJoin(this.value)"><option ${inj.join!=='OR'?'selected':''}>AND</option><option ${inj.join==='OR'?'selected':''}>OR</option></select>
+     — <b>AND</b> = all pass, <b>OR</b> = any one passes.</div></div>`:'';
+  const res=evaluateInject(inj);
+  const evalsHtml=inj.evals.map((e,ei)=>evalCard(inj,e,ei,res.perEval[ei])).join(`<div class="join"><span class="pill" onclick="flipJoin()">${inj.join||'AND'}</span></div>`);
+  return intro("How is it marked complete?","Build the rule on the left; the panel on the right runs it against sample data <b>as you type</b>. Test and author in one place.",3)+`
+   ${join}
+   <div class="eval-split">
+     <div class="build-col">${evalsHtml}
+       <div style="text-align:center;margin-top:14px"><button class="btn" onclick="addEval()">＋ Add another evaluation</button></div>
+     </div>
+     <div class="live-col">${liveCard(inj,res)}</div>
+   </div>`;
+}
+function evalCard(inj,e,ei,er){
+  const st=TOOLS[inj.tool].strategies;
+  return `<div class="eval"><div class="eval-h"><span class="idx">Evaluation ${ei+1}</span><span class="strat">${e.strategy}</span>
+     <span class="live-eval ${er.pass?'ok':'no'}">${er.pass?'✓ passes':'✕ fails'}</span></div>
+    <div class="eval-b">
+     <div class="fieldrow">
+       <div class="field"><label class="lab">Strategy</label><select onchange="setStrat(${ei},this.value)">${Object.entries(st).map(([k,d])=>`<option ${e.strategy===k?'selected':''} title="${d}">${k}</option>`).join("")}</select><div class="help">${st[e.strategy]||''}</div></div>
+       <div class="field"><label class="lab">Result label</label><input class="mono" type="text" value="${escapeHtml(e.result)}"></div>
+       <div class="field" style="flex:0 0 auto"><label class="lab">raw jq/JSON</label><button class="switch ${rawMode?'on':''}" onclick="toggleRaw()" style="margin-top:6px"></button></div>
+     </div>
+     ${rawMode?`<pre class="raw">${buildRaw(e)}</pre>`:e.python?pyBlock():condBlock(e,ei,er)}
+     <div class="scoreline"><label class="lab">Max score</label><input type="number" value="${e.score}" oninput="setScore(${ei},this.value)"><span class="spacer"></span><button class="btn sm danger-o">Remove evaluation</button></div>
+    </div></div>`;
+}
+function condBlock(e,ei,er){
+  return `${e.conds.map((c,ci)=>`<div class="cond ${er.perCond[ci]?'pass':'fail'}">
+     <span class="verdict ${er.perCond[ci]?'ok':'no'}">${er.perCond[ci]?'match':'no match'}</span>
+     <input class="path" value="${escapeHtml(prettyPath(c.path))}" oninput="setPath(${ei},${ci},this.value)">
+     <div class="cline">
+       <select onchange="setOp(${ei},${ci},this.value)">${OPS.map(o=>`<option ${c.op===o?'selected':''}>${o}</option>`).join("")}</select>
+       <div class="valwrap">${c.vals.map((v,vi)=>`<span class="val">${escapeHtml(String(v))}<span class="x" onclick="delVal(${ei},${ci},${vi})">×</span></span>`).join("")}<input placeholder="add value…" onkeydown="if(event.key==='Enter'){addVal(${ei},${ci},this.value);this.value=''}"></div>
+       <button class="icon-btn" title="remove condition">×</button>
+     </div>
+     <div class="extracted">extracted: <code>${escapeHtml(extractedPreview(c.path))}</code></div>
+   </div>`).join("")}
+   <div style="display:flex;gap:8px;align-items:center;margin-top:4px"><button class="btn sm" onclick="addCond(${ei})">＋ Add condition</button>
+     <span style="color:var(--muted);font-size:12px">All conditions in an evaluation must hold.</span>
+     <span class="spacer"></span><button class="btn sm ghost" onclick="alert('jq path helper — extract a value from sample data.')">⌕ jq helper</button></div>`;
+}
+function pyBlock(){return `<pre class="raw"><span class="p">def</span> evaluate(context, misp):
+    events = misp.search(<span class="s">"events"</span>, tags=<span class="s">"tlp:amber"</span>)
+    <span class="p">return</span> len(events) &gt;= <span class="s">1</span></pre>
+   <div class="help" style="margin-top:8px">Runs in the sandbox against live data. Same editor as the old standalone tester — now inline.</div>`;}
+function buildRaw(e){const params=e.python?'["def evaluate(context, misp): ..."]':JSON.stringify(e.conds.map(c=>({[prettyPath(c.path)]:{comparison:c.op,values:c.vals}})),null,2);
+  return `{
+  <span class="k">"evaluation_strategy"</span>: <span class="s">"${e.strategy}"</span>,
+  <span class="k">"result"</span>: <span class="s">"${e.result}"</span>,
+  <span class="k">"score_range"</span>: [<span class="p">0</span>, <span class="p">${e.score}</span>],
+  <span class="k">"parameters"</span>: ${escapeHtml(params)}
+}`;}
+
+function liveCard(inj,res){
+  const presets=PRESETS[inj.uuid];
+  const canLive=inj.evals.every(e=>!e.python)&&inj.evals.some(e=>e.strategy==='data_filtering');
+  return `<div class="live-card">
+    <div class="lh"><h4>Live test</h4><span class="live-badge"><span class="beat"></span>LIVE</span><span class="tick" id="evalTick">evaluates as you type</span></div>
+    <div class="live-b">
+      <div class="verdict-big ${res.pass?'ok':'no'}" id="verdictBig">${res.pass?'✓ Would be marked complete':'✕ Not complete yet'}<span class="score">${res.pass?totalScore(inj):0} / ${totalScore(inj)} pts</span></div>
+      ${presets?`<div class="sample-tabs">${Object.keys(presets).map(p=>`<div class="st ${preset===p?'on':''}" onclick="pickPreset('${p}')">${p}</div>`).join("")}</div>`:''}
+      <div class="data-lbl">Sample data — edit it and the verdict updates instantly</div>
+      <textarea class="data" spellcheck="false" oninput="onData(this.value)">${escapeHtml(dataText)}</textarea>
+      <div id="parseWarn">${res.parseOk?'':`<div class="parse-warn">⚠ Not valid JSON yet — ${escapeHtml(res.parseErr||'')}</div>`}</div>
+      ${!canLive?`<div class="note">Uses <b>${inj.evals[0].strategy}</b>, which runs against a live MISP/endpoint — shown here with a canned response.</div>`:''}
+      <div class="breakdown">${res.breakdown.map(b=>`<div class="brow"><span class="b" style="background:${b.pass?'var(--good)':'var(--bad)'}">${b.pass?'✓':'✕'}</span>
+        <span><code>${escapeHtml(b.label)}</code> ${b.op} ${escapeHtml(JSON.stringify(b.vals))}</span><span class="g">got: ${escapeHtml(b.got)}</span></div>`).join("")}</div>
+    </div></div>`;
+}
+
+/* ---- interactions ---- */
+function selectInject(i){selected=i;step=2;rawMode=false;dataText=DEFAULT_DATA[injects[i].uuid];const p=PRESETS[injects[i].uuid];preset=p?Object.keys(p)[0]:null;renderAll()}
+function goStep(i){step=i;renderStepper();renderPanel()}
+$("#nextBtn").onclick=()=>{if(step<STEPS.length-1){step++;renderStepper();renderPanel()}};
+$("#backBtn").onclick=()=>{if(step>0){step--;renderStepper();renderPanel()}};
+$("#skipBtn").onclick=()=>{};
+function setTool(k){const inj=injects[selected];inj.tool=k;const first=Object.keys(TOOLS[k].strategies)[0];inj.evals.forEach(e=>{if(!TOOLS[k].strategies[e.strategy])e.strategy=first;e.python=(e.strategy==='python')});renderAll()}
+function toggleTrig(k){const t=injects[selected].trigger;const i=t.indexOf(k);i>=0?t.splice(i,1):t.push(k);renderRail();renderPanel();renderStepper()}
+function setReq(v){injects[selected].requires=v||null;renderPanel()}
+function toggleRaw(){rawMode=!rawMode;renderPanel()}
+function setJoin(v){injects[selected].join=v;renderPanel()}
+function flipJoin(){injects[selected].join=(injects[selected].join==='OR')?'AND':'OR';renderPanel()}
+function setStrat(ei,v){const e=injects[selected].evals[ei];e.strategy=v;e.python=(v==='python');renderPanel()}
+function setOp(ei,ci,v){injects[selected].evals[ei].conds[ci].op=v;refreshLive()}
+function setPath(ei,ci,v){injects[selected].evals[ei].conds[ci].path=v;refreshLive()}
+function addVal(ei,ci,v){if(v.trim()){injects[selected].evals[ei].conds[ci].vals.push(v.trim());renderPanel()}}
+function delVal(ei,ci,vi){injects[selected].evals[ei].conds[ci].vals.splice(vi,1);renderPanel()}
+function setScore(ei,v){injects[selected].evals[ei].score=+v||0;refreshLive();$("#curMeta").textContent=`${TOOLS[injects[selected].tool].label} · ${injects[selected].evals.length} evaluation${injects[selected].evals.length>1?'s':''} · max ${totalScore(injects[selected])} pts`}
+function addCond(ei){injects[selected].evals[ei].conds.push({path:".Event.info",op:"contains",vals:[]});renderPanel()}
+function addEval(){const inj=injects[selected];const first=Object.keys(TOOLS[inj.tool].strategies)[0];inj.evals.push({strategy:first,result:"",score:10,conds:[{path:".Event.info",op:"contains",vals:[]}],python:first==='python'});if(!inj.join)inj.join='AND';renderPanel();renderStepper()}
+function pickPreset(p){preset=p;dataText=PRESETS[injects[selected].uuid][p];renderPanel()}
+function onData(v){dataText=v;refreshLive()}
+function refreshLive(){ // update builder verdicts + live card WITHOUT rebuilding the textarea (keep caret)
+  const inj=injects[selected];const res=evaluateInject(inj);
+  // builder eval headers + conditions
+  document.querySelectorAll('.build-col .eval').forEach((el,ei)=>{
+    const er=res.perEval[ei];const badge=el.querySelector('.live-eval');
+    if(badge){badge.className='live-eval '+(er.pass?'ok':'no');badge.textContent=er.pass?'✓ passes':'✕ fails'}
+    el.querySelectorAll('.cond').forEach((cel,ci)=>{const ok=er.perCond[ci];cel.className='cond '+(ok?'pass':'fail');
+      const v=cel.querySelector('.verdict');if(v){v.className='verdict '+(ok?'ok':'no');v.textContent=ok?'match':'no match'}
+      const ex=cel.querySelector('.extracted code');if(ex&&inj.evals[ei].conds[ci])ex.textContent=extractedPreview(inj.evals[ei].conds[ci].path)});
+  });
+  const vb=$("#verdictBig");if(vb){vb.className='verdict-big '+(res.pass?'ok':'no');vb.innerHTML=`${res.pass?'✓ Would be marked complete':'✕ Not complete yet'}<span class="score">${res.pass?totalScore(inj):0} / ${totalScore(inj)} pts</span>`}
+  const pw=$("#parseWarn");if(pw)pw.innerHTML=res.parseOk?'':`<div class="parse-warn">⚠ Not valid JSON yet — ${escapeHtml(res.parseErr||'')}</div>`;
+  const bd=document.querySelector('.live-col .breakdown');if(bd)bd.innerHTML=res.breakdown.map(b=>`<div class="brow"><span class="b" style="background:${b.pass?'var(--good)':'var(--bad)'}">${b.pass?'✓':'✕'}</span><span><code>${escapeHtml(b.label)}</code> ${b.op} ${escapeHtml(JSON.stringify(b.vals))}</span><span class="g">got: ${escapeHtml(b.got)}</span></div>`).join("");
+  const t=$("#evalTick");if(t){t.textContent="re-evaluated ✓";t.style.color="var(--good)";setTimeout(()=>{t.textContent="evaluates as you type";t.style.color=""},700)}
+}
+function renderAll(){renderRail();renderStepper();renderPanel()}
+renderAll();
+</script>
