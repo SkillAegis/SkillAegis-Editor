@@ -10,7 +10,7 @@ import {
   faCircleCheck,
   faBolt,
 } from '@fortawesome/free-solid-svg-icons'
-import { testInject as testInjectAPI, testJqPath as testJqPathAPI } from '@/api'
+import { testInject as testInjectAPI, testJqPath as testJqPathAPI, getSandboxStatus } from '@/api'
 import {
   isLiveTestable,
   isPythonStrategy,
@@ -50,6 +50,28 @@ const testError = ref(null)
 const strategy = computed(() => props.evaluation.evaluation_strategy)
 const canLiveTest = computed(() => isLiveTestable(strategy.value))
 const needsTarget = computed(() => strategy.value === 'query_search' || isPythonStrategy(strategy.value))
+
+// Only the `python` strategy needs the Docker-backed sandbox agent. Probe its
+// readiness so the author is warned upfront instead of only via a 503 after
+// hitting "Run test".
+const needsSandbox = computed(() => isPythonStrategy(strategy.value))
+const sandboxStatus = ref(null) // null=unknown, else { reachable, host, port, hint? }
+const sandboxChecking = ref(false)
+
+async function checkSandbox() {
+  if (!needsSandbox.value) {
+    return
+  }
+  sandboxChecking.value = true
+  try {
+    sandboxStatus.value = await getSandboxStatus()
+  } catch (error) {
+    // A failed probe request itself means we cannot confirm readiness.
+    sandboxStatus.value = { reachable: false, hint: String(error.message || error) }
+  } finally {
+    sandboxChecking.value = false
+  }
+}
 const usesTestData = computed(
   () => strategy.value === 'data_filtering' || isPythonStrategy(strategy.value)
 )
@@ -118,6 +140,8 @@ async function runTest() {
     testError.value = String(error.message || error)
     testResult.value = null
     emit('result', null)
+    // A python failure is often the sandbox agent being down — refresh the badge.
+    checkSandbox()
   }
 }
 
@@ -149,12 +173,15 @@ watch(strategy, () => {
   testResult.value = null
   testError.value = null
   emit('result', null)
+  sandboxStatus.value = null
+  checkSandbox()
 })
 
 onMounted(() => {
   // Give immediate feedback for the cheap local-jq strategy so the
   // "auto-evaluates" affordance is honest as soon as the inject opens.
   scheduleAutoRun()
+  checkSandbox()
 })
 
 onBeforeUnmount(() => {
@@ -201,6 +228,39 @@ async function runJqPath() {
       >
         auto-evaluates
       </span>
+      <button
+        v-if="needsSandbox"
+        type="button"
+        @click="checkSandbox()"
+        :disabled="sandboxChecking"
+        :title="
+          sandboxChecking
+            ? 'Checking the python sandbox agent…'
+            : sandboxStatus?.reachable
+              ? `Python sandbox agent reachable on ${sandboxStatus.host}:${sandboxStatus.port} — click to re-check`
+              : `${sandboxStatus?.hint || 'Python sandbox agent not reachable'} — click to re-check`
+        "
+        class="ml-auto text-2xs font-semibold rounded-full px-2 py-0.5 transition-colors"
+        :class="
+          sandboxChecking
+            ? 'bg-slate-400/90 text-white'
+            : sandboxStatus === null
+              ? 'bg-slate-400/90 text-white'
+              : sandboxStatus.reachable
+                ? 'bg-green-500/90 text-white'
+                : 'bg-red-500/90 text-white'
+        "
+      >
+        {{
+          sandboxChecking
+            ? 'checking sandbox…'
+            : sandboxStatus === null
+              ? 'sandbox: unknown'
+              : sandboxStatus.reachable
+                ? 'sandbox ready'
+                : 'sandbox offline'
+        }}
+      </button>
     </div>
 
     <div class="p-3 flex flex-col gap-3">
@@ -274,6 +334,13 @@ async function runJqPath() {
             ⚠ Not valid JSON yet
           </div>
         </div>
+
+        <Alert
+          v-if="needsSandbox && sandboxStatus && !sandboxStatus.reachable"
+          variant="warning"
+          title="Python sandbox agent not running"
+          :message="`${sandboxStatus.hint || 'Start the sandbox agent, then re-check.'} Tests will fail until it is running.`"
+        ></Alert>
 
         <button
           class="btn btn-info btn-colored btn-block select-none"

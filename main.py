@@ -2,6 +2,7 @@
 
 import datetime
 import os
+import socket
 import sys
 from typing import Any, Dict, Union
 from pathlib import Path
@@ -29,6 +30,12 @@ CEXF_SCHEMA_PATH = Path(__file__).parent / 'schema_cexf.json'
 CEXF_SCHEMA = {}
 INJECT_EVAL_SUCCESS = 1
 INJECT_EVAL_FAIL = 2
+
+# The `python` evaluation strategy runs submitted code in a separate sandbox
+# agent (epicbox/Docker) reached over HTTP on this host/port. Kept in sync with
+# tools/SkillAegis-Dashboard/backend/sandboxClient.py.
+SANDBOX_AGENT_HOST = 'localhost'
+SANDBOX_AGENT_PORT = 9573
 
 app = FastAPI()
 
@@ -434,6 +441,26 @@ def testInject(injectToTest) -> dict:
     return test_result
 
 
+def probe_sandbox_agent(timeout: float = 0.5) -> dict:
+    """Cheaply check whether the python sandbox agent is accepting connections.
+
+    Does a TCP connect only (no container spin-up), so it is safe to poll from
+    the UI. A successful connect means the agent on localhost:9573 is listening;
+    it does not by itself prove the Docker engine behind it is healthy.
+    """
+    result = {'reachable': False, 'host': SANDBOX_AGENT_HOST, 'port': SANDBOX_AGENT_PORT}
+    try:
+        with socket.create_connection((SANDBOX_AGENT_HOST, SANDBOX_AGENT_PORT), timeout=timeout):
+            result['reachable'] = True
+    except OSError as e:
+        result['reason'] = str(e)
+        result['hint'] = (
+            'Start it with: (cd tools/SkillAegis-Dashboard/backend && python sandboxAgent.py) '
+            '— requires Docker.'
+        )
+    return result
+
+
 def testJqPath(path: str, data: dict, extract_type: str) -> tuple:
     inject_evaluator = loadInjectEvaluator()
     success = True
@@ -631,6 +658,15 @@ def save_inject(scenario_uuid: str, injectOrder: InjectOrder):
 def save_inject(injectToTest: InjectToTestPayload):
     result = testInject(injectToTest)
     return success(f"Injects tested", "Result is attached", result)
+
+
+@app.get("/injects/sandbox-status")
+def sandbox_status():
+    # Lets the UI tell whether the `python` strategy is testable *before* a user
+    # writes/runs code, instead of only discovering it via a 503 after testing.
+    status = probe_sandbox_agent()
+    title = 'Python sandbox agent reachable' if status['reachable'] else 'Python sandbox agent not reachable'
+    return success(title, status.get('hint', ''), status)
 
 
 @app.post("/injects/jq-path-test")

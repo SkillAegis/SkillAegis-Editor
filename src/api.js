@@ -16,6 +16,7 @@ const endpoints = {
     'inject-order': '/scenarios/order-inject',
     'inject-test': '/injects/test',
     'inject-jq-path-test': '/injects/jq-path-test',
+    'sandbox-status': '/injects/sandbox-status',
 }
 
 async function get(url) {
@@ -149,4 +150,12 @@ export async function testInject(payload) {
 export async function testJqPath(payload) {
     const url = endpoints['inject-jq-path-test']
     return await post(url, payload)
+}
+
+// Cheap readiness probe for the python-evaluation sandbox agent. Returns the
+// backend payload { reachable, host, port, reason?, hint? } so the python
+// tester can warn upfront when the agent is not running.
+export async function getSandboxStatus() {
+    const data = await get(endpoints['sandbox-status'])
+    return data.data
 }
