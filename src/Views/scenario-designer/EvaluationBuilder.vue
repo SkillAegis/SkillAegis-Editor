@@ -322,6 +322,7 @@ function extractedFor(i) {
               v-for="(condition, ci) in localConditions"
               :key="ci"
               :condition="condition"
+              :strategy="strategy"
               :verdict="verdictFor(ci)"
               :extracted="extractedFor(ci)"
               @remove="removeCondition(ci)"

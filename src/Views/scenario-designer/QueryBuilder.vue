@@ -1,0 +1,206 @@
+<script setup>
+import { computed } from 'vue'
+import { faPlus, faXmark } from '@fortawesome/free-solid-svg-icons'
+import {
+  SOURCE_PRESETS,
+  FILTER_FIELDS_BY_KIND,
+  PROJECTIONS_BY_KIND,
+  QUERY_FILTER_OPS,
+  buildPathFromQuery,
+  defaultQueryForSource,
+  sourceOptionsForStrategy,
+} from '@/Views/scenario-designer/evaluationModel.js'
+
+// The query object { source, eventField?, filters, project }. Two-way bound;
+// the parent (ConditionRow) serialises it to the condition's jq path.
+const query = defineModel('query', {
+  type: Object,
+  required: true,
+})
+
+const props = defineProps({
+  // Strategy scopes the FROM options (query_search → .response[] presets).
+  strategy: {
+    type: String,
+    default: 'data_filtering',
+  },
+})
+
+const OP_LABELS = {
+  is: 'is',
+  'is-one-of': 'is one of',
+  matches: 'matches regex',
+  contains: 'contains',
+}
+
+const kind = computed(() => SOURCE_PRESETS[query.value.source]?.kind || 'event')
+const isEvent = computed(() => kind.value === 'event')
+const isResponse = computed(() => query.value.source?.startsWith('resp-'))
+
+const filterFields = computed(() => FILTER_FIELDS_BY_KIND[kind.value] || [])
+const projections = computed(() => PROJECTIONS_BY_KIND[kind.value] || [])
+
+// FROM options for the strategy, guaranteeing the stored source stays visible.
+const sourceOptions = computed(() => {
+  const options = sourceOptionsForStrategy(props.strategy)
+  if (query.value.source && !options.some((o) => o.key === query.value.source)) {
+    const preset = SOURCE_PRESETS[query.value.source]
+    options.push({ key: query.value.source, label: preset ? preset.label : query.value.source })
+  }
+  return options
+})
+
+const generatedPath = computed(() => buildPathFromQuery(query.value))
+
+function projectionLabel(projection) {
+  return projection === '*self*' ? '(the item itself)' : '.' + projection
+}
+
+// Switching FROM keeps filters/projection when the kind is unchanged (e.g.
+// all-attr → obj-attr) and resets them when the kind changes.
+function onSourceChange(newSource) {
+  const newKind = SOURCE_PRESETS[newSource]?.kind
+  if (newKind === kind.value) {
+    query.value = { ...query.value, source: newSource }
+  } else {
+    query.value = defaultQueryForSource(newSource)
+  }
+}
+
+function addFilter() {
+  query.value.filters.push({ field: filterFields.value[0] || 'value', op: 'is', value: '' })
+}
+
+function removeFilter(index) {
+  query.value.filters.splice(index, 1)
+}
+</script>
+
+<template>
+  <div class="flex flex-col gap-2">
+    <!-- FROM -->
+    <div class="rounded border border-slate-200 bg-white">
+      <div class="flex items-center gap-2 px-2 py-1 border-b border-slate-100 bg-slate-50">
+        <span
+          class="font-mono text-2xs font-bold text-white bg-blue-500 rounded px-1 py-0.5 leading-none"
+          >FROM</span
+        >
+        <span class="text-xs font-bold text-slate-600">Look at…</span>
+      </div>
+      <div class="p-2 flex flex-col gap-2">
+        <select
+          :value="query.source"
+          @change="onSourceChange($event.target.value)"
+          class="shadow-sm border border-slate-300 w-full rounded py-1 px-2 text-sm text-gray-700 leading-tight focus:outline-none focus:border-slate-400 bg-white"
+        >
+          <option v-for="opt in sourceOptions" :key="opt.key" :value="opt.key">
+            {{ opt.label }}
+          </option>
+        </select>
+        <div v-if="isEvent" class="flex items-center gap-2">
+          <span class="text-xs text-slate-500 shrink-0">field</span>
+          <input
+            type="text"
+            v-model="query.eventField"
+            class="shadow-sm border border-slate-300 font-mono text-sm text-red-700 w-full rounded py-1 px-2 leading-tight focus:outline-none focus:border-slate-400 bg-white"
+            :placeholder="isResponse ? 'event_creator_email' : 'info'"
+            spellcheck="false"
+          />
+        </div>
+      </div>
+    </div>
+
+    <!-- WHERE -->
+    <div v-if="!isEvent" class="rounded border border-slate-200 bg-white">
+      <div class="flex items-center gap-2 px-2 py-1 border-b border-slate-100 bg-slate-50">
+        <span
+          class="font-mono text-2xs font-bold text-white bg-amber-500 rounded px-1 py-0.5 leading-none"
+          >WHERE</span
+        >
+        <span class="text-xs font-bold text-slate-600">Keep only the ones where…</span>
+        <span class="text-2xs text-slate-400 ml-auto">optional · all AND together</span>
+      </div>
+      <div class="p-2 flex flex-col gap-1.5">
+        <p v-if="query.filters.length === 0" class="text-xs text-slate-400 italic">
+          No filter — the check runs on all of them.
+        </p>
+        <template v-for="(filter, fi) in query.filters" :key="fi">
+          <div v-if="fi > 0" class="text-2xs font-bold text-slate-400 text-center leading-none">
+            AND
+          </div>
+          <div class="flex items-center gap-1.5">
+            <select
+              v-model="filter.field"
+              class="shadow-sm border border-slate-300 rounded py-1 px-1 text-xs font-mono text-red-700 leading-tight focus:outline-none focus:border-slate-400 bg-white shrink-0 w-28"
+            >
+              <option v-for="f in filterFields" :key="f" :value="f">.{{ f }}</option>
+              <option v-if="!filterFields.includes(filter.field)" :value="filter.field">
+                .{{ filter.field }}
+              </option>
+            </select>
+            <select
+              v-model="filter.op"
+              class="shadow-sm border border-slate-300 rounded py-1 px-1 text-xs text-gray-700 leading-tight focus:outline-none focus:border-slate-400 bg-white shrink-0 w-28"
+            >
+              <option v-for="op in QUERY_FILTER_OPS" :key="op" :value="op">
+                {{ OP_LABELS[op] }}
+              </option>
+            </select>
+            <input
+              type="text"
+              v-model="filter.value"
+              class="shadow-sm border border-slate-300 font-mono text-xs text-slate-700 grow rounded py-1 px-2 leading-tight focus:outline-none focus:border-slate-400 bg-white min-w-[4rem]"
+              :placeholder="filter.op === 'is-one-of' ? 'a, b, c' : 'value'"
+              spellcheck="false"
+            />
+            <button
+              type="button"
+              class="btn btn-sm btn-danger select-none shrink-0 !px-1.5"
+              title="Remove filter"
+              @click="removeFilter(fi)"
+            >
+              <FontAwesomeIcon :icon="faXmark" class="fa-fw"></FontAwesomeIcon>
+            </button>
+          </div>
+        </template>
+        <div>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:text-blue-900 select-none"
+            @click="addFilter()"
+          >
+            <FontAwesomeIcon :icon="faPlus" class="fa-fw"></FontAwesomeIcon> Add filter
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- CHECK -->
+    <div v-if="!isEvent" class="rounded border border-slate-200 bg-white">
+      <div class="flex items-center gap-2 px-2 py-1 border-b border-slate-100 bg-slate-50">
+        <span
+          class="font-mono text-2xs font-bold text-white bg-green-600 rounded px-1 py-0.5 leading-none"
+          >CHECK</span
+        >
+        <span class="text-xs font-bold text-slate-600">Then check…</span>
+      </div>
+      <div class="p-2">
+        <select
+          v-model="query.project"
+          class="shadow-sm border border-slate-300 w-full rounded py-1 px-2 text-sm font-mono text-gray-700 leading-tight focus:outline-none focus:border-slate-400 bg-white"
+        >
+          <option v-for="p in projections" :key="p" :value="p">{{ projectionLabel(p) }}</option>
+          <option v-if="!projections.includes(query.project)" :value="query.project">
+            {{ projectionLabel(query.project) }}
+          </option>
+        </select>
+      </div>
+    </div>
+
+    <!-- generated jq preview -->
+    <div class="flex items-baseline gap-2 text-2xs">
+      <span class="uppercase tracking-wide font-bold text-slate-400 shrink-0">jq</span>
+      <code class="font-mono text-red-700 break-all leading-relaxed">{{ generatedPath }}</code>
+    </div>
+  </div>
+</template>

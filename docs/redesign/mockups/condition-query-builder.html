@@ -1,0 +1,1059 @@
+<title>Making data_filtering approachable — concept prototypes</title>
+<style>
+  :root {
+    /* slate-family neutrals, biased toward the app's blue accent */
+    --bg: #f1f5f9;
+    --surface: #ffffff;
+    --surface-2: #f8fafc;
+    --surface-3: #f1f5f9;
+    --border: #cbd5e1;
+    --border-soft: #e2e8f0;
+    --ink: #1e293b;
+    --ink-soft: #475569;
+    --ink-faint: #64748b;
+    --ink-fainter: #94a3b8;
+
+    --accent: #2563eb;
+    --accent-strong: #1d4ed8;
+    --accent-bg: #eff6ff;
+    --accent-border: #bfdbfe;
+
+    --jq: #b91c1c;          /* the red the app uses for jq paths */
+    --jq-bg: #fef2f2;
+
+    --good: #16a34a;
+    --good-bg: #f0fdf4;
+    --good-border: #86efac;
+    --warn: #b45309;
+    --warn-bg: #fffbeb;
+    --warn-border: #fcd34d;
+    --bad: #dc2626;
+    --bad-bg: #fef2f2;
+
+    --mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+    --shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.05);
+    --shadow-lg: 0 10px 25px -8px rgba(15, 23, 42, 0.18);
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b1120;
+      --surface: #111a2e;
+      --surface-2: #0f1729;
+      --surface-3: #1a2542;
+      --border: #334155;
+      --border-soft: #26324b;
+      --ink: #e6edf7;
+      --ink-soft: #b6c2d6;
+      --ink-faint: #8b9ab4;
+      --ink-fainter: #64748b;
+
+      --accent: #60a5fa;
+      --accent-strong: #93c5fd;
+      --accent-bg: #17233f;
+      --accent-border: #2c4269;
+
+      --jq: #fca5a5;
+      --jq-bg: #2a1416;
+
+      --good: #4ade80;
+      --good-bg: #10241a;
+      --good-border: #1e5b3a;
+      --warn: #fbbf24;
+      --warn-bg: #2a2010;
+      --warn-border: #5c4415;
+      --bad: #f87171;
+      --bad-bg: #2a1416;
+
+      --shadow: 0 1px 2px rgba(0,0,0,0.4);
+      --shadow-lg: 0 12px 30px -10px rgba(0,0,0,0.6);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg:#f1f5f9;--surface:#fff;--surface-2:#f8fafc;--surface-3:#f1f5f9;--border:#cbd5e1;--border-soft:#e2e8f0;
+    --ink:#1e293b;--ink-soft:#475569;--ink-faint:#64748b;--ink-fainter:#94a3b8;
+    --accent:#2563eb;--accent-strong:#1d4ed8;--accent-bg:#eff6ff;--accent-border:#bfdbfe;
+    --jq:#b91c1c;--jq-bg:#fef2f2;--good:#16a34a;--good-bg:#f0fdf4;--good-border:#86efac;
+    --warn:#b45309;--warn-bg:#fffbeb;--warn-border:#fcd34d;--bad:#dc2626;--bad-bg:#fef2f2;
+    --shadow:0 1px 2px rgba(15,23,42,0.06),0 1px 3px rgba(15,23,42,0.05);--shadow-lg:0 10px 25px -8px rgba(15,23,42,0.18);
+  }
+  :root[data-theme="dark"] {
+    --bg:#0b1120;--surface:#111a2e;--surface-2:#0f1729;--surface-3:#1a2542;--border:#334155;--border-soft:#26324b;
+    --ink:#e6edf7;--ink-soft:#b6c2d6;--ink-faint:#8b9ab4;--ink-fainter:#64748b;
+    --accent:#60a5fa;--accent-strong:#93c5fd;--accent-bg:#17233f;--accent-border:#2c4269;
+    --jq:#fca5a5;--jq-bg:#2a1416;--good:#4ade80;--good-bg:#10241a;--good-border:#1e5b3a;
+    --warn:#fbbf24;--warn-bg:#2a2010;--warn-border:#5c4415;--bad:#f87171;--bad-bg:#2a1416;
+    --shadow:0 1px 2px rgba(0,0,0,0.4);--shadow-lg:0 12px 30px -10px rgba(0,0,0,0.6);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 28px 20px 80px; }
+
+  /* ---- header ---- */
+  header.page { margin-bottom: 22px; }
+  .eyebrow {
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--ink-faint); font-weight: 700; margin-bottom: 8px;
+  }
+  h1 { font-size: clamp(24px, 3.4vw, 34px); line-height: 1.15; margin: 0 0 10px; text-wrap: balance; letter-spacing: -0.02em; }
+  .lede { font-size: 16px; color: var(--ink-soft); max-width: 68ch; margin: 0; }
+
+  /* the target expression callout */
+  .target {
+    margin: 20px 0 4px; padding: 14px 16px; border-radius: var(--radius);
+    background: var(--jq-bg); border: 1px solid var(--border-soft);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .target .label { font-size: 12px; font-weight: 700; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.06em; }
+  .target code {
+    font-family: var(--mono); font-size: 13.5px; color: var(--jq); word-break: break-word; line-height: 1.65;
+  }
+  .target .parts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--ink-soft);
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .chip b { color: var(--ink); font-weight: 700; }
+  .chip .k { font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+
+  /* ---- tabs ---- */
+  nav.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 26px 0 18px; border-bottom: 1px solid var(--border-soft); }
+  .tab {
+    appearance: none; border: none; background: none; cursor: pointer;
+    font-family: var(--sans); font-size: 14px; font-weight: 600; color: var(--ink-faint);
+    padding: 9px 14px; border-radius: 8px 8px 0 0; position: relative; top: 1px;
+    border-bottom: 2px solid transparent; transition: color .12s;
+  }
+  .tab:hover { color: var(--ink); }
+  .tab[aria-selected="true"] { color: var(--accent-strong); border-bottom-color: var(--accent); }
+  .tab .num { font-family: var(--mono); font-size: 12px; opacity: .7; margin-right: 5px; }
+  .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .panel { display: none; animation: fade .18s ease; }
+  .panel.active { display: block; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px);} to { opacity:1; transform:none;} }
+  @media (prefers-reduced-motion: reduce) { .panel, * { animation: none !important; } }
+
+  /* ---- generic cards ---- */
+  .card {
+    background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 18px;
+  }
+  .card + .card { margin-top: 16px; }
+  h2.section { font-size: 20px; margin: 0 0 6px; letter-spacing: -0.01em; }
+  p.section-sub { margin: 0 0 18px; color: var(--ink-soft); max-width: 70ch; font-size: 14.5px; }
+
+  /* the builder mock — resembles the real evaluation panel */
+  .builder {
+    display: grid; grid-template-columns: 1fr; gap: 14px;
+  }
+  @media (min-width: 860px) { .builder.split { grid-template-columns: 1.15fr 0.85fr; } }
+
+  fieldset.step {
+    border: 1px solid var(--border-soft); border-radius: 10px; padding: 0; margin: 0;
+    background: var(--surface-2); overflow: hidden;
+  }
+  fieldset.step > legend { display: none; }
+  .step-head {
+    display: flex; align-items: center; gap: 10px; padding: 9px 13px;
+    background: var(--surface-3); border-bottom: 1px solid var(--border-soft);
+  }
+  .step-badge {
+    width: 22px; height: 22px; border-radius: 6px; background: var(--accent); color: #fff;
+    font-size: 11px; font-weight: 800; letter-spacing: 0.05em; display: grid; place-items: center; flex: none;
+    font-family: var(--mono);
+  }
+  .step-title { font-weight: 700; font-size: 13.5px; color: var(--ink); }
+  .step-hint { font-size: 12px; color: var(--ink-faint); margin-left: auto; }
+  .step-body { padding: 13px; display: flex; flex-direction: column; gap: 10px; }
+
+  label.fld { font-size: 12px; font-weight: 700; color: var(--ink-soft); display: block; margin-bottom: 4px; }
+  select, input[type="text"] {
+    font-family: var(--sans); font-size: 13.5px; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 7px;
+    padding: 7px 9px; width: 100%; box-shadow: var(--shadow);
+  }
+  select:focus, input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+  .mono-in { font-family: var(--mono); color: var(--jq); }
+
+  .filter-row { display: grid; grid-template-columns: 1.1fr 1fr 1.4fr auto; gap: 7px; align-items: center; }
+  .filter-row + .filter-row { margin-top: 7px; }
+  .and-tag { font-size: 10.5px; font-weight: 800; letter-spacing: 0.08em; color: var(--ink-fainter); text-align: center; margin: 2px 0; }
+  .row-x {
+    appearance: none; border: 1px solid var(--border); background: var(--surface); color: var(--ink-faint);
+    width: 30px; height: 32px; border-radius: 7px; cursor: pointer; font-size: 14px; font-weight: 700;
+  }
+  .row-x:hover { color: var(--bad); border-color: var(--bad); }
+
+  .btn {
+    appearance: none; cursor: pointer; font-family: var(--sans); font-weight: 600; font-size: 13px;
+    border-radius: 7px; padding: 7px 12px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--ink); box-shadow: var(--shadow); display: inline-flex; gap: 7px; align-items: center;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent-strong); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: var(--accent-strong); }
+  .btn.ghost { background: transparent; box-shadow: none; border-style: dashed; color: var(--ink-faint); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 560px){ .grid-2 { grid-template-columns: 1fr; } }
+
+  /* output / generated jq */
+  .output {
+    border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface-2); overflow: hidden;
+    align-self: start; position: sticky; top: 14px;
+  }
+  .output-head { padding: 9px 13px; background: var(--surface-3); border-bottom: 1px solid var(--border-soft); font-weight: 700; font-size: 12.5px; color: var(--ink-soft); display:flex; align-items:center; gap:8px;}
+  .output-body { padding: 14px 13px; display: flex; flex-direction: column; gap: 12px; }
+  .sentence { font-size: 14px; color: var(--ink); line-height: 1.6; }
+  .sentence .s-from { color: var(--accent-strong); font-weight: 700; }
+  .sentence .s-where { color: var(--warn); font-weight: 700; }
+  .sentence .s-check { color: var(--good); font-weight: 700; }
+  .genwrap { }
+  .genwrap .cap { font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; margin-bottom: 5px; display:flex; justify-content:space-between; }
+  pre.gen {
+    margin: 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.7; color: var(--jq);
+    background: var(--jq-bg); border: 1px solid var(--border-soft); border-radius: 8px; padding: 11px 12px;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  pre.gen .g-from { color: var(--accent-strong); }
+  pre.gen .g-where { color: var(--warn); }
+  pre.gen .g-check { color: var(--good); }
+  .match-note {
+    font-size: 12.5px; padding: 8px 11px; border-radius: 8px; display: flex; gap: 8px; align-items: flex-start;
+    background: var(--good-bg); border: 1px solid var(--good-border); color: var(--good);
+  }
+  .match-note.off { background: var(--surface-3); border-color: var(--border-soft); color: var(--ink-faint); }
+  .match-note b { color: inherit; }
+
+  /* pick-from-sample tree */
+  .tree-layout { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  @media (min-width: 900px) { .tree-layout { grid-template-columns: 1.2fr 0.8fr; } }
+  .tree {
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.5; background: var(--surface-2);
+    border: 1px solid var(--border-soft); border-radius: 10px; padding: 12px 12px; overflow-x: auto;
+  }
+  .tnode { padding-left: 16px; }
+  .tkey { color: var(--accent-strong); }
+  .tbrace { color: var(--ink-faint); }
+  .attr-card {
+    border: 1px dashed var(--border); border-radius: 8px; padding: 6px 8px; margin: 5px 0; background: var(--surface);
+  }
+  .attr-card .obj-tag { font-size: 10px; color: var(--ink-fainter); letter-spacing: 0.05em; text-transform: uppercase; }
+  .pick {
+    cursor: pointer; border-radius: 5px; padding: 1px 5px; border: 1px solid transparent; transition: background .1s, border-color .1s;
+    display: inline-block;
+  }
+  .pick:hover { background: var(--accent-bg); border-color: var(--accent-border); }
+  .pick.sel { background: var(--accent); color: #fff !important; border-color: var(--accent); }
+  .pick.sel * { color: #fff !important; }
+  .pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .v-str { color: var(--good); }
+  .v-bool { color: #9333ea; }
+  .v-num { color: #0891b2; }
+  .field-name { color: var(--jq); }
+  @media (prefers-color-scheme: dark){ .v-bool{color:#c4b5fd;} .v-num{color:#67e8f9;} }
+  :root[data-theme="dark"] .v-bool{color:#c4b5fd;} :root[data-theme="dark"] .v-num{color:#67e8f9;}
+
+  .hint-row { display:flex; gap:8px; align-items:center; font-size:12px; color: var(--ink-faint); margin-top: 4px; }
+
+  .empty { color: var(--ink-faint); font-size: 13.5px; font-style: italic; padding: 8px 0; }
+
+  .toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-soft); cursor: pointer; user-select: none; }
+  .toggle input { width: auto; }
+
+  /* proposal grid (other options) */
+  .props { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  @media (min-width: 720px) { .props { grid-template-columns: 1fr 1fr; } }
+  .prop {
+    border: 1px solid var(--border-soft); border-radius: 10px; padding: 14px 15px; background: var(--surface); box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 7px;
+  }
+  .prop .ph { display: flex; align-items: baseline; gap: 8px; }
+  .prop h3 { margin: 0; font-size: 15px; }
+  .prop .effort { font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; margin-left: auto; }
+  .effort.low { background: var(--good-bg); color: var(--good); border: 1px solid var(--good-border); }
+  .effort.med { background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn-border); }
+  .effort.high { background: var(--accent-bg); color: var(--accent-strong); border: 1px solid var(--accent-border); }
+  .prop p { margin: 0; font-size: 13px; color: var(--ink-soft); }
+  .prop .rec { font-size: 11.5px; font-weight: 700; color: var(--accent-strong); }
+  .prop code { font-family: var(--mono); font-size: 11.5px; background: var(--surface-3); padding: 1px 5px; border-radius: 4px; color: var(--jq); }
+
+  .footnote { margin-top: 24px; font-size: 12.5px; color: var(--ink-faint); text-align: center; }
+
+  .callout {
+    display:flex; gap:10px; padding: 11px 13px; border-radius: 9px; background: var(--accent-bg);
+    border: 1px solid var(--accent-border); color: var(--ink-soft); font-size: 13px; margin-bottom: 16px;
+  }
+  .callout b { color: var(--accent-strong); }
+</style>
+
+<div class="wrap">
+  <header class="page">
+    <div class="eyebrow">SkillAegis · Inject Designer · concept study</div>
+    <h1>Building a <code style="font-family:var(--mono);font-size:0.7em;color:var(--jq)">data_filtering</code> rule without writing jq</h1>
+    <p class="lede">
+      The power of <b>data_filtering</b> is real, but authors currently express it as a raw jq pipeline — easy to get
+      wrong, hard to read back. Every complex rule is really a small query with three moves. If the tool knows those
+      moves, it can write the jq so the author never has to.
+    </p>
+
+    <div class="target">
+      <span class="label">The expression you flagged as overwhelming</span>
+      <code>[.Event.Object[].Attribute[], .Event.Attribute[]] | .[] | select(.value == "194.78.89.250").to_ids</code>
+      <div class="parts">
+        <span class="chip"><span class="k">from</span> <b>every attribute in the event</b></span>
+        <span class="chip"><span class="k">where</span> <b>value is 194.78.89.250</b></span>
+        <span class="chip"><span class="k">check</span> <b>its to_ids flag</b></span>
+      </div>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Concepts">
+    <button class="tab" role="tab" aria-selected="true"  aria-controls="p-idea"    id="t-idea">The idea</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="p-builder" id="t-builder"><span class="num">①</span>Guided query builder</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="p-pick"    id="t-pick"><span class="num">②</span>Point at the data</button>
+    <button class="tab" role="tab" aria-selected="false" aria-controls="p-more"    id="t-more">All options</button>
+  </nav>
+
+  <!-- ============ IDEA ============ -->
+  <section class="panel active" id="p-idea" role="tabpanel" aria-labelledby="t-idea">
+    <div class="card">
+      <h2 class="section">Every scary rule is the same three moves</h2>
+      <p class="section-sub">
+        I extracted every jq path from your shipped scenarios. The complex ones never vary in structure — they only vary
+        in which collection, which filter, and which field. Name those three slots and the jq becomes a by-product.
+      </p>
+
+      <div style="display:grid;grid-template-columns:1fr;gap:0;border:1px solid var(--border-soft);border-radius:10px;overflow:hidden">
+        <div style="display:grid;grid-template-columns:90px 1fr 1.2fr;background:var(--surface-3);padding:9px 13px;font-size:11px;font-weight:800;letter-spacing:0.06em;text-transform:uppercase;color:var(--ink-faint)">
+          <span>Move</span><span>Author picks</span><span>Generated jq</span>
+        </div>
+        <div class="idea-row" style="display:grid;grid-template-columns:90px 1fr 1.2fr;padding:11px 13px;border-top:1px solid var(--border-soft);align-items:center">
+          <span style="color:var(--accent-strong);font-weight:800">FROM</span>
+          <span style="font-size:13.5px">“Every attribute in the event”</span>
+          <code style="font-family:var(--mono);font-size:12px;color:var(--accent-strong)">[.Event.Object[].Attribute[], .Event.Attribute[]] | .[]</code>
+        </div>
+        <div class="idea-row" style="display:grid;grid-template-columns:90px 1fr 1.2fr;padding:11px 13px;border-top:1px solid var(--border-soft);align-items:center">
+          <span style="color:var(--warn);font-weight:800">WHERE</span>
+          <span style="font-size:13.5px">“value is 194.78.89.250” <span style="color:var(--ink-faint)">(optional)</span></span>
+          <code style="font-family:var(--mono);font-size:12px;color:var(--warn)">select(.value == "194.78.89.250")</code>
+        </div>
+        <div class="idea-row" style="display:grid;grid-template-columns:90px 1fr 1.2fr;padding:11px 13px;border-top:1px solid var(--border-soft);align-items:center">
+          <span style="color:var(--good);font-weight:800">CHECK</span>
+          <span style="font-size:13.5px">“its to_ids flag”</span>
+          <code style="font-family:var(--mono);font-size:12px;color:var(--good)">.to_ids</code>
+        </div>
+      </div>
+
+      <p class="section-sub" style="margin-top:16px;margin-bottom:0">
+        The two tabs above are working prototypes of this idea. <b>① Guided query builder</b> gives authors the three
+        slots as dropdowns. <b>② Point at the data</b> flips it around: click the value in a real event and the tool
+        writes the path for you. Both keep the raw jq editor as an escape hatch, and both preview the generated jq live —
+        try them.
+      </p>
+    </div>
+
+    <div class="card">
+      <h2 class="section">Why this is safe to build</h2>
+      <p class="section-sub" style="margin-bottom:10px">
+        None of this changes the CEXF data model or the evaluation engine — it only changes how a condition's
+        <code style="font-family:var(--mono);color:var(--jq)">path</code> string is authored. The generated jq is
+        identical to what authors write by hand today, and you already have the plumbing:
+      </p>
+      <ul style="margin:0;padding-left:20px;color:var(--ink-soft);font-size:14px;line-height:1.9">
+        <li>the visual condition builder (<code style="font-family:var(--mono);color:var(--jq)">ConditionRow.vue</code>) already owns the operator + values half of a condition;</li>
+        <li>the <code style="font-family:var(--mono);color:var(--jq)">/injects/jq-path-test</code> endpoint already compiles a path against sample data and returns the extracted value or the error — that powers the live preview and validation for free;</li>
+        <li>anything the builder can't express round-trips to the existing raw jq/JSON editor.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ BUILDER ============ -->
+  <section class="panel" id="p-builder" role="tabpanel" aria-labelledby="t-builder" hidden>
+    <div class="card">
+      <h2 class="section">① Guided query builder</h2>
+      <p class="section-sub">
+        Three plain-language slots replace the jq text box. The author never types a bracket or a pipe; the exact jq is
+        assembled underneath and previewed live. This panel is fully interactive — change any control.
+      </p>
+
+      <div class="callout">
+        <span>💡</span>
+        <span>It opens pre-loaded with <b>your overwhelming example</b>. Watch the green banner: the builder reproduces that exact expression, character-for-character, from three dropdowns.</span>
+      </div>
+
+      <div class="builder split">
+        <div style="display:flex;flex-direction:column;gap:12px">
+
+          <!-- FROM -->
+          <fieldset class="step">
+            <legend>Source</legend>
+            <div class="step-head">
+              <span class="step-badge" style="background:var(--accent)">FR</span>
+              <span class="step-title">Look at…</span>
+              <span class="step-hint">which part of the data</span>
+            </div>
+            <div class="step-body">
+              <select id="b-source" aria-label="Source collection">
+                <option value="all-attr">Every attribute in the event (objects + top-level)</option>
+                <option value="obj-attr">Attributes inside objects only</option>
+                <option value="top-attr">Top-level attributes only</option>
+                <option value="objects">The event's objects</option>
+                <option value="tags">The event's tags</option>
+                <option value="event-field">A single field on the event</option>
+                <option value="response">Every attribute across the search response</option>
+              </select>
+              <div id="b-eventfield-wrap" style="display:none">
+                <label class="fld" for="b-eventfield">Event field</label>
+                <select id="b-eventfield" class="mono-in">
+                  <option value="info">.info</option>
+                  <option value="published">.published</option>
+                  <option value="distribution">.distribution</option>
+                  <option value="threat_level_id">.threat_level_id</option>
+                </select>
+              </div>
+            </div>
+          </fieldset>
+
+          <!-- WHERE -->
+          <fieldset class="step">
+            <legend>Filter</legend>
+            <div class="step-head">
+              <span class="step-badge" style="background:var(--warn)">WH</span>
+              <span class="step-title">Keep only the ones where…</span>
+              <span class="step-hint">optional · all filters AND together</span>
+            </div>
+            <div class="step-body">
+              <div id="b-filters"></div>
+              <div>
+                <button class="btn ghost" id="b-addfilter" type="button">＋ Add filter</button>
+              </div>
+            </div>
+          </fieldset>
+
+          <!-- CHECK -->
+          <fieldset class="step">
+            <legend>Check</legend>
+            <div class="step-head">
+              <span class="step-badge" style="background:var(--good)">CH</span>
+              <span class="step-title">Then check…</span>
+              <span class="step-hint">field + comparison</span>
+            </div>
+            <div class="step-body">
+              <div class="grid-2">
+                <div>
+                  <label class="fld" for="b-project">Field to check</label>
+                  <select id="b-project" class="mono-in"></select>
+                </div>
+                <div>
+                  <label class="fld" for="b-op">Comparison</label>
+                  <select id="b-op">
+                    <option value="is-set">is set / true</option>
+                    <option value="equals">equals</option>
+                    <option value="contains">contains</option>
+                    <option value="equals_any">is one of</option>
+                    <option value="regex">matches regex</option>
+                    <option value="count">count</option>
+                  </select>
+                </div>
+              </div>
+              <div id="b-value-wrap">
+                <label class="fld" for="b-value">Value(s)</label>
+                <input type="text" id="b-value" placeholder="e.g. 194.78.89.250" />
+              </div>
+            </div>
+          </fieldset>
+        </div>
+
+        <!-- OUTPUT -->
+        <div class="output">
+          <div class="output-head">🔎 What this rule does</div>
+          <div class="output-body">
+            <div class="sentence" id="b-sentence"></div>
+            <div class="genwrap">
+              <div class="cap"><span>Generated jq path</span><span style="color:var(--good)">✓ valid</span></div>
+              <pre class="gen" id="b-gen"></pre>
+            </div>
+            <div class="match-note" id="b-match">
+              <span>✓</span><span id="b-match-txt"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PICK ============ -->
+  <section class="panel" id="p-pick" role="tabpanel" aria-labelledby="t-pick" hidden>
+    <div class="card">
+      <h2 class="section">② Point at the data</h2>
+      <p class="section-sub">
+        Instead of describing the shape from memory, the author loads a sample event (the last one a trainee produced,
+        or a pasted example) and <b>clicks the thing they want to check</b>. The tool figures out where it lives —
+        top-level or nested in an object — and writes the union path and filter automatically.
+      </p>
+
+      <div class="callout">
+        <span>👉</span>
+        <span>Click any <b>green value</b>, <b>purple flag</b>, or the event <b>info</b> in the tree. To rebuild your example: click the <code style="font-family:var(--mono);color:var(--jq)">to_ids</code> flag on the <b>ip-dst 194.78.89.250</b> attribute.</span>
+      </div>
+
+      <div class="tree-layout">
+        <div>
+          <div class="hint-row"><b style="color:var(--ink-soft)">sample event</b> · trainee's last MISP event · click to build a check</div>
+          <div class="tree" id="tree"></div>
+        </div>
+
+        <div class="output" style="position:sticky">
+          <div class="output-head">🔎 Generated check</div>
+          <div class="output-body" id="pick-out">
+            <div class="empty">Nothing selected yet — click a value in the event.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ MORE ============ -->
+  <section class="panel" id="p-more" role="tabpanel" aria-labelledby="t-more" hidden>
+    <div class="card">
+      <h2 class="section">The full menu — four ways, ordered by effort</h2>
+      <p class="section-sub">
+        These aren't mutually exclusive. The cheapest ships in a day and helps immediately; the richest is the two
+        prototypes above. My recommendation: <b>①+② together</b>, with ③ baked into whatever text field remains and ④ as the always-there safety net.</p>
+
+      <div class="props">
+        <div class="prop">
+          <div class="ph"><h3>A · Snippet palette</h3><span class="effort low">~1 day</span></div>
+          <p>An “＋ insert” dropdown beside the path field with the ~8 canonical building blocks pre-written
+            (“all attributes”, “attributes of type…”, “the event's tags”, “search response events”). Recognition, not recall.</p>
+          <p><code>[.Event.Object[].Attribute[], .Event.Attribute[]] | .[]</code> becomes a menu item.</p>
+          <span class="rec">Cheapest win · complements everything else</span>
+        </div>
+
+        <div class="prop">
+          <div class="ph"><h3>C · Live validate + preview</h3><span class="effort med">~2–3 days</span></div>
+          <p>Keep the text field but make it honest: compile the path on every keystroke via the existing
+            <code>/injects/jq-path-test</code> endpoint, show red/green, and render the extracted value inline against the sample event. Blind typing becomes guided typing.</p>
+          <span class="rec">Wrap it around A, ① and ②</span>
+        </div>
+
+        <div class="prop">
+          <div class="ph"><h3>① · Guided query builder</h3><span class="effort high">~1–1.5 wk</span></div>
+          <p>The FROM / WHERE / CHECK composer from tab ①. Covers the great majority of real scenario paths with zero jq.
+            Raw editor stays for the long tail.</p>
+          <span class="rec">Recommended primary authoring mode</span>
+        </div>
+
+        <div class="prop">
+          <div class="ph"><h3>② · Point at the data</h3><span class="effort high">~1–1.5 wk</span></div>
+          <p>The click-to-build surface from tab ②. Removes the need to know MISP's shape at all. Pairs naturally with the
+            builder — clicking pre-fills the same three slots.</p>
+          <span class="rec">Best onboarding / “aha” · accelerator for ①</span>
+        </div>
+      </div>
+
+      <p class="section-sub" style="margin-top:18px;margin-bottom:0">
+        <b>Sequencing:</b> ship <b>A</b> now (immediate relief), add <b>C</b>'s validation to the existing field, then land
+        <b>①</b> as the default with <b>②</b> as its accelerator. Each step is useful on its own, and none of them touch the
+        evaluation engine or the CEXF schema.
+      </p>
+    </div>
+  </section>
+
+  <p class="footnote">Self-contained concept prototype · matches the Inject Designer's slate/Tailwind styling · generated jq is exactly what the engine consumes today.</p>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- tabs ---------- */
+  var tabs = Array.prototype.slice.call(document.querySelectorAll(".tab"));
+  var panels = {
+    "t-idea": "p-idea", "t-builder": "p-builder", "t-pick": "p-pick", "t-more": "p-more"
+  };
+  function select(tab) {
+    tabs.forEach(function (t) {
+      var on = t === tab;
+      t.setAttribute("aria-selected", on ? "true" : "false");
+      var p = document.getElementById(panels[t.id]);
+      p.classList.toggle("active", on);
+      if (on) { p.removeAttribute("hidden"); } else { p.setAttribute("hidden", ""); }
+    });
+  }
+  tabs.forEach(function (t) {
+    t.addEventListener("click", function () { select(t); });
+    t.addEventListener("keydown", function (e) {
+      var i = tabs.indexOf(t);
+      if (e.key === "ArrowRight") { e.preventDefault(); tabs[(i + 1) % tabs.length].focus(); tabs[(i+1)%tabs.length].click(); }
+      if (e.key === "ArrowLeft")  { e.preventDefault(); tabs[(i - 1 + tabs.length) % tabs.length].focus(); tabs[(i-1+tabs.length)%tabs.length].click(); }
+    });
+  });
+
+  /* ---------- shared jq helpers ---------- */
+  function lit(v) {
+    var s = String(v).trim();
+    if (s === "true" || s === "false") return s;
+    if (s !== "" && !isNaN(Number(s)) && /^-?\d+(\.\d+)?$/.test(s)) return s;
+    return '"' + s.replace(/"/g, '\\"') + '"';
+  }
+  function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+  // sources: base jq + whether items are "each" (a stream of attribute-like objects)
+  var SOURCES = {
+    "all-attr":  { jq: "[.Event.Object[].Attribute[], .Event.Attribute[]] | .[]", each: true,  noun: "every attribute in the event" },
+    "obj-attr":  { jq: ".Event.Object[].Attribute[]", each: true,  noun: "each attribute inside an object" },
+    "top-attr":  { jq: ".Event.Attribute[]", each: true,  noun: "each top-level attribute" },
+    "objects":   { jq: ".Event.Object[]", each: true,  noun: "each object" },
+    "tags":      { jq: ".Event.Tag[]", each: true,  noun: "each tag" },
+    "response":  { jq: "[.response[].Event.Object[].Attribute[], .response[].Event.Attribute[]] | .[]", each: true, noun: "every attribute in the search response" },
+    "event-field": { jq: ".Event", each: false, noun: "the event" }
+  };
+
+  // projection field choices per source
+  var PROJECTIONS = {
+    attr: [["value","its value"],["to_ids","its to_ids flag"],["type","its type"],["category","its category"],["comment","its comment"],["*self*","the whole attribute"]],
+    obj:  [["name","its name"],["distribution","its distribution"],["*self*","the whole object"]],
+    tag:  [["name","its name"]]
+  };
+  function projKindFor(src){
+    if (src === "objects") return "obj";
+    if (src === "tags") return "tag";
+    return "attr";
+  }
+
+  /* ================= BUILDER ================= */
+  var bSource = document.getElementById("b-source");
+  var bEventFieldWrap = document.getElementById("b-eventfield-wrap");
+  var bEventField = document.getElementById("b-eventfield");
+  var bFilters = document.getElementById("b-filters");
+  var bAddFilter = document.getElementById("b-addfilter");
+  var bProject = document.getElementById("b-project");
+  var bOp = document.getElementById("b-op");
+  var bValue = document.getElementById("b-value");
+  var bValueWrap = document.getElementById("b-value-wrap");
+  var bGen = document.getElementById("b-gen");
+  var bSentence = document.getElementById("b-sentence");
+  var bMatch = document.getElementById("b-match");
+  var bMatchTxt = document.getElementById("b-match-txt");
+
+  var TARGET = '[.Event.Object[].Attribute[], .Event.Attribute[]] | .[] | select(.value == "194.78.89.250").to_ids';
+
+  var filters = [{ field: "value", op: "is", value: "194.78.89.250" }];
+
+  var FILTER_FIELDS = {
+    attr: ["value","type","category","to_ids","comment","object_relation"],
+    obj:  ["name","meta-category","distribution"],
+    tag:  ["name"]
+  };
+  var FILTER_OPS = [["is","is"],["is-one-of","is one of"],["matches","matches regex"],["contains","contains"]];
+
+  function renderProjectionOptions() {
+    var kind = projKindFor(bSource.value);
+    var list = PROJECTIONS[kind];
+    bProject.innerHTML = "";
+    list.forEach(function (p) {
+      var o = document.createElement("option");
+      o.value = p[0];
+      o.textContent = (p[0] === "*self*" ? "(the item itself)" : "." + p[0]) + " — " + p[1];
+      bProject.appendChild(o);
+    });
+  }
+
+  function renderFilters() {
+    var kind = projKindFor(bSource.value);
+    var fields = FILTER_FIELDS[kind];
+    bFilters.innerHTML = "";
+    if (filters.length === 0) {
+      var e = document.createElement("div");
+      e.className = "empty";
+      e.textContent = "No filter — the check runs on all of them.";
+      bFilters.appendChild(e);
+      return;
+    }
+    filters.forEach(function (f, idx) {
+      if (idx > 0) {
+        var and = document.createElement("div");
+        and.className = "and-tag";
+        and.textContent = "AND";
+        bFilters.appendChild(and);
+      }
+      var row = document.createElement("div");
+      row.className = "filter-row";
+
+      var fSel = document.createElement("select");
+      fSel.className = "mono-in";
+      fields.forEach(function (fld) {
+        var o = document.createElement("option"); o.value = fld; o.textContent = "." + fld;
+        if (fld === f.field) o.selected = true;
+        fSel.appendChild(o);
+      });
+      // keep custom field visible even if not in list
+      if (fields.indexOf(f.field) === -1) {
+        var o2 = document.createElement("option"); o2.value = f.field; o2.textContent = "." + f.field; o2.selected = true;
+        fSel.appendChild(o2);
+      }
+      fSel.addEventListener("change", function () { f.field = fSel.value; render(); });
+
+      var opSel = document.createElement("select");
+      FILTER_OPS.forEach(function (op) {
+        var o = document.createElement("option"); o.value = op[0]; o.textContent = op[1];
+        if (op[0] === f.op) o.selected = true;
+        opSel.appendChild(o);
+      });
+      opSel.addEventListener("change", function () { f.op = opSel.value; render(); });
+
+      var val = document.createElement("input");
+      val.type = "text"; val.className = "mono-in"; val.value = f.value;
+      val.placeholder = f.op === "is-one-of" ? "a, b, c" : "value";
+      val.addEventListener("input", function () { f.value = val.value; render(); });
+
+      var x = document.createElement("button");
+      x.className = "row-x"; x.type = "button"; x.setAttribute("aria-label","Remove filter"); x.textContent = "✕";
+      x.addEventListener("click", function () { filters.splice(idx, 1); render(); });
+
+      row.appendChild(fSel); row.appendChild(opSel); row.appendChild(val); row.appendChild(x);
+      bFilters.appendChild(row);
+    });
+  }
+
+  function filterExpr(f) {
+    var field = "." + f.field;
+    if (f.op === "matches") return field + ' | match(' + lit(f.value) + ')';
+    if (f.op === "contains") return field + ' | contains(' + lit(f.value) + ')';
+    if (f.op === "is-one-of") {
+      var parts = String(f.value).split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+      if (parts.length === 0) return field + ' == ""';
+      return "(" + parts.map(function (p) { return field + " == " + lit(p); }).join(" or ") + ")";
+    }
+    return field + " == " + lit(f.value); // is
+  }
+
+  function buildPath() {
+    var src = SOURCES[bSource.value];
+    var proj = bProject.value;
+
+    if (bSource.value === "event-field") {
+      return ".Event." + bEventField.value;
+    }
+
+    var base = src.jq;
+    var validFilters = filters.filter(function (f) { return f.value !== "" || f.op === "matches"; });
+    var projSuffix = (proj === "*self*") ? "" : ("." + proj);
+
+    if (validFilters.length > 0) {
+      var sel = "select(" + validFilters.map(filterExpr).join(" and ") + ")";
+      // attach projection directly to select(), matching real scenarios: select(...).to_ids
+      return base + " | " + sel + projSuffix;
+    }
+    // no filter: attach projection to the element
+    if (projSuffix === "") return base;
+    // merge trailing " | .[]" + ".value" into ".[].value" for idiomatic output
+    if (/\| \.\[\]$/.test(base)) return base.replace(/\| \.\[\]$/, "| .[]" + projSuffix);
+    return base + projSuffix;
+  }
+
+  // colorised version for display
+  function buildPathHTML() {
+    var src = SOURCES[bSource.value];
+    if (bSource.value === "event-field") {
+      return '<span class="g-from">.Event.' + esc(bEventField.value) + '</span>';
+    }
+    var proj = bProject.value;
+    var projSuffix = (proj === "*self*") ? "" : ("." + proj);
+    var validFilters = filters.filter(function (f) { return f.value !== "" || f.op === "matches"; });
+    var fromHTML = '<span class="g-from">' + esc(src.jq) + '</span>';
+    if (validFilters.length > 0) {
+      var sel = 'select(' + validFilters.map(filterExpr).join(" and ") + ')';
+      var checkHTML = projSuffix ? '<span class="g-check">' + esc(projSuffix) + '</span>' : "";
+      return fromHTML + ' | <span class="g-where">' + esc(sel) + '</span>' + checkHTML;
+    }
+    if (!projSuffix) return fromHTML;
+    if (/\| \.\[\]$/.test(src.jq)) {
+      return '<span class="g-from">' + esc(src.jq.replace(/\| \.\[\]$/, "| .[]")) + '</span><span class="g-check">' + esc(projSuffix) + '</span>';
+    }
+    return fromHTML + '<span class="g-check">' + esc(projSuffix) + '</span>';
+  }
+
+  function sentence() {
+    var src = SOURCES[bSource.value];
+    var proj = bProject.value;
+    var projLabel = "";
+    var kind = projKindFor(bSource.value);
+    (PROJECTIONS[kind] || []).forEach(function (p) { if (p[0] === proj) projLabel = p[1]; });
+
+    var opWord = { "is-set":"is set", "equals":"equals", "contains":"contains", "equals_any":"is one of", "regex":"matches", "count":"count is" }[bOp.value];
+    var valTxt = bOp.value === "is-set" ? "" : (' <b>' + esc(bValue.value || "…") + '</b>');
+
+    var fromTxt = (bSource.value === "event-field")
+      ? 'the event field <b>.' + esc(bEventField.value) + '</b>'
+      : src.noun;
+
+    var whereTxt = "";
+    var vf = filters.filter(function (f){ return f.value !== "" || f.op === "matches"; });
+    if (vf.length > 0 && bSource.value !== "event-field") {
+      whereTxt = ' <span class="s-where">where</span> ' + vf.map(function (f) {
+        var ow = { "is":"is", "is-one-of":"is one of", "matches":"matches", "contains":"contains" }[f.op];
+        return '<b>.' + esc(f.field) + '</b> ' + ow + ' <b>' + esc(f.value || "…") + '</b>';
+      }).join(" and ");
+    }
+
+    return 'Pass when, <span class="s-from">looking at ' + fromTxt + '</span>' + whereTxt +
+           ', <span class="s-check">' + esc(projLabel || ("." + proj)) + '</span> ' + opWord + valTxt + '.';
+  }
+
+  function render() {
+    // source-dependent UI
+    bEventFieldWrap.style.display = (bSource.value === "event-field") ? "" : "none";
+    renderProjectionOptions();
+    // preserve projection selection if still available
+    renderFilters();
+
+    // value box hidden for is-set
+    bValueWrap.style.display = (bOp.value === "is-set") ? "none" : "";
+
+    var path = buildPath();
+    bGen.innerHTML = buildPathHTML();
+    bSentence.innerHTML = sentence();
+
+    var isTarget = path === TARGET;
+    bMatch.className = "match-note" + (isTarget ? "" : " off");
+    if (isTarget) {
+      bMatchTxt.innerHTML = "This is <b>exactly</b> the expression you flagged — built from three dropdowns, no jq typed.";
+      bMatch.firstElementChild.textContent = "✓";
+    } else {
+      bMatchTxt.innerHTML = "Reset the controls to <b>all attributes · value is 194.78.89.250 · to_ids</b> to reproduce your original example.";
+      bMatch.firstElementChild.textContent = "↺";
+    }
+  }
+
+  bSource.addEventListener("change", function () {
+    // reset filters to a sensible default when switching source families
+    render();
+  });
+  bEventField.addEventListener("change", render);
+  bProject.addEventListener("change", render);
+  bOp.addEventListener("change", render);
+  bValue.addEventListener("input", render);
+  bAddFilter.addEventListener("click", function () {
+    var kind = projKindFor(bSource.value);
+    filters.push({ field: FILTER_FIELDS[kind][0], op: "is", value: "" });
+    render();
+  });
+
+  // init builder to the target example
+  bSource.value = "all-attr";
+  renderProjectionOptions();
+  bProject.value = "to_ids";
+  bOp.value = "is-set";
+  bValue.value = "";
+  render();
+
+  /* ================= PICK FROM SAMPLE ================= */
+  var SAMPLE = {
+    Event: {
+      info: "Phishing campaign impersonating the finance department",
+      published: true,
+      Attribute: [
+        { type: "ip-dst", value: "194.78.89.250", to_ids: true, category: "Network activity" }
+      ],
+      Object: [
+        {
+          name: "file",
+          Attribute: [
+            { type: "sha256", value: "04d496d39bc9409bfdabdeb07002b97093b58f77", to_ids: false, category: "Payload delivery" },
+            { type: "filename", value: "invoice_2026.exe", to_ids: true, category: "Payload delivery" }
+          ]
+        },
+        {
+          name: "email",
+          Attribute: [
+            { type: "email-src", value: "billing@secure-pay.com", to_ids: false, category: "Payload delivery" }
+          ]
+        }
+      ],
+      Tag: [ { name: "tlp:amber" }, { name: "malware:phishing" } ]
+    }
+  };
+
+  var treeEl = document.getElementById("tree");
+  var pickOut = document.getElementById("pick-out");
+  var selectedEl = null;
+
+  function pill(txt, cls) { return '<span class="' + cls + '">' + esc(txt) + '</span>'; }
+
+  // Build an interactive tree. Clickable elements carry data-* describing the intended check.
+  function buildTree() {
+    var h = "";
+    h += '<div class="tbrace">Event {</div>';
+    h += '<div class="tnode">';
+
+    // info
+    h += '<div><span class="tkey">info</span>: ' +
+         clickable(SAMPLE.Event.Event ? "" : SAMPLE.Event.info, "v-str", {
+           kind: "event-field", field: "info", value: SAMPLE.Event.info, op: "contains"
+         }) + '</div>';
+    // published
+    h += '<div><span class="tkey">published</span>: ' +
+         clickable(String(SAMPLE.Event.published), "v-bool", {
+           kind: "event-field", field: "published", value: "true", op: "is-set"
+         }) + '</div>';
+
+    // top-level attributes
+    h += '<div><span class="tkey">Attribute</span>: [';
+    SAMPLE.Event.Attribute.forEach(function (a) { h += attrCard(a, null); });
+    h += ']</div>';
+
+    // objects
+    h += '<div><span class="tkey">Object</span>: [';
+    SAMPLE.Event.Object.forEach(function (o) {
+      h += '<div class="attr-card"><span class="obj-tag">object · ' + esc(o.name) + '</span>';
+      o.Attribute.forEach(function (a) { h += attrCard(a, o.name); });
+      h += '</div>';
+    });
+    h += ']</div>';
+
+    // tags
+    h += '<div><span class="tkey">Tag</span>: [';
+    SAMPLE.Event.Tag.forEach(function (t) {
+      h += '<div class="attr-card">name: ' + clickable(t.name, "v-str", {
+        kind: "tag", field: "name", value: t.name, op: "contains"
+      }) + '</div>';
+    });
+    h += ']</div>';
+
+    h += '</div><div class="tbrace">}</div>';
+    treeEl.innerHTML = h;
+
+    Array.prototype.forEach.call(treeEl.querySelectorAll(".pick"), function (el) {
+      el.setAttribute("tabindex", "0");
+      el.addEventListener("click", function () { onPick(el); });
+      el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(el); } });
+    });
+  }
+
+  function attrCard(a, objName) {
+    var meta = objName ? '<span class="obj-tag">in object · ' + esc(objName) + '</span>' : '<span class="obj-tag">top-level</span>';
+    var h = '<div class="attr-card">' + meta;
+    h += '<div>type: ' + clickable(a.type, "v-str", { kind: "attr", filterBy: "type", filterVal: a.type, project: "value", op: "equals", value: a.value }) +
+         '  value: ' + clickable(a.value, "v-str", { kind: "attr", filterBy: null, project: "value", op: "contains", value: a.value }) + '</div>';
+    h += '<div>to_ids: ' + clickable(String(a.to_ids), "v-bool", { kind: "attr", filterBy: "value", filterVal: a.value, project: "to_ids", op: "is-set", value: "" }) +
+         '  category: ' + clickable(a.category, "v-str", { kind: "attr", filterBy: "value", filterVal: a.value, project: "category", op: "equals", value: a.category }) + '</div>';
+    h += '</div>';
+    return h;
+  }
+
+  function clickable(txt, vcls, data) {
+    var attrs = Object.keys(data).map(function (k) {
+      return 'data-' + k.toLowerCase() + '="' + esc(data[k] === null ? "" : data[k]) + '"';
+    }).join(" ");
+    return '<span class="pick" ' + attrs + '><span class="' + vcls + '">' + esc(txt) + '</span></span>';
+  }
+
+  var ALL_ATTR = "[.Event.Object[].Attribute[], .Event.Attribute[]] | .[]";
+
+  function onPick(el) {
+    if (selectedEl) selectedEl.classList.remove("sel");
+    selectedEl = el; el.classList.add("sel");
+    var d = el.dataset;
+
+    var path, jqHTML, sentenceHTML, opVal, values;
+
+    if (d.kind === "event-field") {
+      path = ".Event." + d.field;
+      jqHTML = '<span class="g-from">.Event.' + esc(d.field) + '</span>';
+      opVal = d.op;
+      values = d.op === "is-set" ? "true" : d.value;
+      sentenceHTML = 'Check that the event field <b>.' + esc(d.field) + '</b> ' +
+        (d.op === "is-set" ? "is set" : "contains <b>" + esc(d.value) + "</b>") + '.';
+    } else if (d.kind === "tag") {
+      path = ".Event.Tag[].name";
+      jqHTML = '<span class="g-from">.Event.Tag[].name</span>';
+      opVal = "contains"; values = d.value;
+      sentenceHTML = 'Check that the event has a <b>tag</b> containing <b>' + esc(d.value) + '</b>.';
+    } else {
+      // attribute — always use the safe union source, filter if needed
+      var project = d.project;
+      var projSuffix = "." + project;
+      if (d.filterby && d.filterby !== "") {
+        var f = "." + d.filterby + " == " + lit(d.filterval);
+        path = ALL_ATTR + " | select(" + f + ")" + projSuffix;
+        jqHTML = '<span class="g-from">' + esc(ALL_ATTR) + '</span> | <span class="g-where">select(' + esc(f) + ')</span><span class="g-check">' + esc(projSuffix) + '</span>';
+        sentenceHTML = 'Find the attribute where <b>.' + esc(d.filterby) + '</b> is <b>' + esc(d.filterval) + '</b> (anywhere in the event), then check <b>' + esc(projSuffix) + '</b>';
+      } else {
+        // just collect the field across all attributes
+        path = ALL_ATTR.replace(/\| \.\[\]$/, "| .[]") + projSuffix;
+        // idiomatic .[].value
+        path = "[.Event.Object[].Attribute[], .Event.Attribute[]] | .[]" + projSuffix;
+        jqHTML = '<span class="g-from">[.Event.Object[].Attribute[], .Event.Attribute[]] | .[]</span><span class="g-check">' + esc(projSuffix) + '</span>';
+        sentenceHTML = 'Check that some attribute\'s <b>' + esc(projSuffix) + '</b> ';
+      }
+      opVal = d.op;
+      values = d.op === "is-set" ? "true / 1" : d.value;
+      if (d.op === "is-set") sentenceHTML += ' is <b>set</b>.';
+      else if (d.filterby) sentenceHTML += ' ' + opVal + ' <b>' + esc(d.value) + '</b>.';
+      else sentenceHTML += (opVal) + ' <b>' + esc(d.value) + '</b>.';
+    }
+
+    var isTarget = path === TARGET;
+
+    var html = "";
+    html += '<div class="sentence">' + sentenceHTML + '</div>';
+    html += '<div class="genwrap"><div class="cap"><span>Generated jq path</span><span style="color:var(--good)">✓ valid</span></div><pre class="gen">' + jqHTML + '</pre></div>';
+
+    // resulting condition summary (operator + values, matching ConditionRow)
+    html += '<div class="genwrap"><div class="cap"><span>Condition</span></div>' +
+      '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">' +
+      '<span class="chip"><span class="k">op</span> <b>' + esc({ "is-set":"is set", "equals":"equals", "contains":"contains", "equals_any":"is one of" }[opVal] || opVal) + '</b></span>' +
+      (opVal === "is-set" ? "" : '<span class="chip"><span class="k">value</span> <b>' + esc(values) + '</b></span>') +
+      '</div></div>';
+
+    if (isTarget) {
+      html += '<div class="match-note"><span>✓</span><span>This is <b>exactly</b> your overwhelming example — produced by one click.</span></div>';
+    }
+    // "match all like this" for attribute value picks
+    if (d.kind === "attr" && d.filterby === "value") {
+      html += '<label class="toggle" style="margin-top:2px"><input type="checkbox" id="matchall"> Match <b>&nbsp;all attributes of this type&nbsp;</b> instead of just this one</label>';
+    }
+
+    pickOut.innerHTML = html;
+
+    var ma = document.getElementById("matchall");
+    if (ma) {
+      ma.addEventListener("change", function () {
+        var attrType = null;
+        // find the attribute's type from the sample by its value
+        [].concat(SAMPLE.Event.Attribute, SAMPLE.Event.Object.reduce(function (acc, o) { return acc.concat(o.Attribute); }, []))
+          .forEach(function (a) { if (a.value === d.filterval) attrType = a.type; });
+        if (ma.checked && attrType) {
+          var f2 = '.type == "' + attrType + '"';
+          var p2 = ALL_ATTR + " | select(" + f2 + ")." + d.project;
+          pickOut.querySelector("pre.gen").innerHTML =
+            '<span class="g-from">' + esc(ALL_ATTR) + '</span> | <span class="g-where">select(' + esc(f2) + ')</span><span class="g-check">.' + esc(d.project) + '</span>';
+          pickOut.querySelector(".sentence").innerHTML =
+            'Find <b>every</b> attribute of type <b>' + esc(attrType) + '</b> (anywhere in the event), then check <b>.' + esc(d.project) + '</b> is set. Extracts <b>all</b> matches.';
+        } else {
+          onPick(el); // rebuild single-match view (will reset checkbox)
+        }
+      });
+    }
+  }
+
+  buildTree();
+
+})();
+</script>
