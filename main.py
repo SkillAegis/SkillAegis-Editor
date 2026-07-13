@@ -6,6 +6,7 @@ import sys
 from typing import Any, Dict, Union
 from pathlib import Path
 import json
+import traceback
 from urllib.parse import urljoin
 import uuid
 import importlib.util
@@ -18,7 +19,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 import config
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -61,6 +62,26 @@ def register_exception(app: FastAPI):
         exc_str = f'{exc}'.replace('\n', ' ').replace('   ', ' ')
         content = {'status_code': 10422, 'message': exc_str, 'data': None}
         return JSONResponse(content=content, status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception):
+        # Unhandled exceptions are turned into a 500 by Starlette's
+        # ServerErrorMiddleware, which sits OUTSIDE the CORS middleware — so the
+        # error response carries no `Access-Control-Allow-Origin` header, the
+        # browser blocks it, and fetch() only reports an opaque "Failed to
+        # fetch". Return the 500 ourselves with the CORS header attached (and log
+        # the traceback server-side) so the real cause reaches the UI.
+        traceback.print_exc()
+        exc_str = f'{exc}'.replace('\n', ' ').replace('   ', ' ')
+        content = {'status_code': 500, 'message': f'Internal Server Error: {exc_str}', 'data': None}
+        return JSONResponse(
+            content=content,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            headers={'Access-Control-Allow-Origin': '*'},
+        )
+
+
+register_exception(app)
 
 
 def loadInjectEvaluator():
@@ -389,12 +410,24 @@ def testInject(injectToTest) -> dict:
         # Tries to fetch data based on provided auth. Fallback to test_data
         data_to_validate = injectToTest.test_data
         if misp_url and authkey:
-            print(injectToTest)
             data_to_validate, error = fetch_data_for_query_search(misp_url, authkey, inject_evaluation)
         if data_to_validate is False:
             data_to_validate = injectToTest.test_data
 
-        (success, inject_debug) = inject_evaluator.eval_python(authkey, inject_evaluation, data_to_validate, context, debug=True)
+        try:
+            (success, inject_debug) = inject_evaluator.eval_python(authkey, inject_evaluation, data_to_validate, context, debug=True)
+        except OSError as e:
+            # The python strategy runs the submitted code in a separate sandbox
+            # agent (epicbox/Docker) reached over HTTP on localhost:9573. When it
+            # is not running the socket call raises ConnectionRefusedError (an
+            # OSError) — surface an actionable message rather than a bare 500.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    'Python sandbox agent not reachable on localhost:9573. Start it with: '
+                    '(cd tools/SkillAegis-Dashboard/backend && python sandboxAgent.py) — requires Docker.'
+                ),
+            ) from e
         debug = debug + inject_debug
     test_result['outcome'] = INJECT_EVAL_SUCCESS if success else INJECT_EVAL_FAIL
     test_result['debug'] = debug
