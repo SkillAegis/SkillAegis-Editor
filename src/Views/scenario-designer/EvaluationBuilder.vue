@@ -23,6 +23,7 @@ import {
   getStrategyInfo,
   isComparisonStrategy,
   isPythonStrategy,
+  parseMaybeJSON,
   usesQueryContext,
 } from '@/Views/scenario-designer/evaluationModel.js'
 
@@ -143,6 +144,17 @@ onMounted(() => {
 /* ---- context editor ---- */
 const showContext = ref(usesQueryContext(strategy.value))
 const showOperatorsHelp = ref(false)
+
+/* ---- shared sample data ---- */
+// Owned here (not in LiveTestPanel) so the per-condition path preview in
+// ConditionRow validates against the very same sample the live test uses.
+const sampleDataText = ref('{\n  "Event": {\n    "info": ""\n  }\n}')
+const sampleData = computed(() => {
+  const parsed = parseMaybeJSON(sampleDataText.value)
+  const value = parsed.ok ? parsed.value : null
+  // /injects/jq-path-test expects a JSON object; arrays/primitives are skipped.
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : null
+})
 
 /* ---- per-condition verdicts from the live test ---- */
 const lastResultData = ref(null)
@@ -323,6 +335,7 @@ function extractedFor(i) {
               :key="ci"
               :condition="condition"
               :strategy="strategy"
+              :sample-data="sampleData"
               :verdict="verdictFor(ci)"
               :extracted="extractedFor(ci)"
               @remove="removeCondition(ci)"
@@ -400,6 +413,7 @@ function extractedFor(i) {
       <!-- live test column -->
       <div class="w-full lg:basis-2/5 lg:sticky lg:top-2">
         <LiveTestPanel
+          v-model:test-data="sampleDataText"
           :evaluation="evaluation"
           :target-tool="targetTool"
           @result="onTestResult"

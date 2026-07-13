@@ -1,10 +1,21 @@
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { faTimes, faXmark, faArrowRightLong, faCode, faTableList } from '@fortawesome/free-solid-svg-icons'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import {
+  faTimes,
+  faXmark,
+  faArrowRightLong,
+  faCode,
+  faTableList,
+  faCircleCheck,
+  faCircleXmark,
+  faSpinner,
+} from '@fortawesome/free-solid-svg-icons'
+import { testJqPath as testJqPathAPI } from '@/api'
 import {
   OPERATORS,
   parseQueryFromPath,
   buildPathFromQuery,
+  describeCondition,
 } from '@/Views/scenario-designer/evaluationModel.js'
 import QueryBuilder from '@/Views/scenario-designer/QueryBuilder.vue'
 
@@ -15,7 +26,7 @@ const condition = defineModel('condition', {
   required: true,
 })
 
-defineProps({
+const props = defineProps({
   // Live-test feedback for this condition (optional).
   verdict: {
     type: String, // 'pass' | 'fail' | null
@@ -29,6 +40,12 @@ defineProps({
   strategy: {
     type: String,
     default: 'data_filtering',
+  },
+  // Parsed sample-data object the path preview runs against (null when the
+  // sample is invalid/absent). Used only for the data_filtering path preview.
+  sampleData: {
+    type: Object,
+    default: null,
   },
 })
 
@@ -110,7 +127,110 @@ function toggleRaw() {
   }
 }
 
-onMounted(reload)
+/* ---- plain-language sentence (builder mode only) ---- */
+const sentence = computed(() =>
+  showBuilder.value
+    ? describeCondition(query.value, condition.value.comparison, condition.value.values)
+    : null
+)
+
+/* ---- live path preview (P2) ---- */
+// Compile-check the condition's jq path against the sample data and preview what
+// it extracts. data_filtering only: it is the one strategy whose "Sample data"
+// box holds the actual data the rule runs on (query_search etc. hit a live
+// target, so a local sample would be misleading).
+const isDataFiltering = computed(() => props.strategy === 'data_filtering')
+const pathState = ref('idle') // 'idle' | 'testing' | 'valid' | 'error'
+const pathExtracted = ref(null)
+const pathError = ref(null)
+
+let pathTestTimer = null
+let pathTestSeq = 0
+
+function formatExtracted(value) {
+  let text
+  try {
+    text = JSON.stringify(value)
+  } catch (error) {
+    text = String(value)
+  }
+  if (typeof text !== 'string') {
+    text = String(text)
+  }
+  return text.length > 200 ? text.slice(0, 200) + '…' : text
+}
+
+function schedulePathTest() {
+  if (pathTestTimer) {
+    clearTimeout(pathTestTimer)
+    pathTestTimer = null
+  }
+  const path = condition.value.path
+  if (!isDataFiltering.value || !props.sampleData || typeof path !== 'string' || path.trim() === '') {
+    pathState.value = 'idle'
+    return
+  }
+  pathState.value = 'testing'
+  pathTestTimer = setTimeout(runPathTest, 350)
+}
+
+async function runPathTest() {
+  const path = condition.value.path
+  const data = props.sampleData
+  if (!isDataFiltering.value || !data || typeof path !== 'string' || path.trim() === '') {
+    pathState.value = 'idle'
+    return
+  }
+  const seq = (pathTestSeq += 1)
+  try {
+    const result = await testJqPathAPI({
+      path,
+      data,
+      // Preview what the comparison actually receives ('' → backend 'first').
+      extract_type: condition.value.extract_type || 'first',
+    })
+    if (seq !== pathTestSeq) {
+      return // superseded by a newer test
+    }
+    if (result && result.success === false) {
+      pathState.value = 'error'
+      pathError.value = result.message || 'Invalid jq path'
+      pathExtracted.value = null
+    } else {
+      pathState.value = 'valid'
+      pathError.value = null
+      pathExtracted.value = formatExtracted(result ? result.data : null)
+    }
+  } catch (error) {
+    if (seq !== pathTestSeq) {
+      return
+    }
+    pathState.value = 'error'
+    pathError.value = String(error.message || error)
+    pathExtracted.value = null
+  }
+}
+
+watch(
+  [
+    () => condition.value.path,
+    () => props.sampleData,
+    () => condition.value.extract_type,
+    isDataFiltering,
+  ],
+  schedulePathTest
+)
+
+onMounted(() => {
+  reload()
+  schedulePathTest()
+})
+
+onBeforeUnmount(() => {
+  if (pathTestTimer) {
+    clearTimeout(pathTestTimer)
+  }
+})
 </script>
 
 <template>
@@ -133,7 +253,8 @@ onMounted(reload)
     <div class="flex flex-col gap-1.5">
       <!-- path authoring: visual builder or raw jq -->
       <div class="flex flex-col gap-1.5">
-        <div class="flex items-center gap-2">
+        <!-- reserve room on the right for the absolute verdict badge so the raw/advanced toggle never sits under it -->
+        <div class="flex items-center gap-2" :class="{ 'pr-20': verdict !== null }">
           <span class="text-2xs font-bold uppercase tracking-wide text-slate-400">Data to check</span>
           <button
             v-if="representable"
@@ -165,6 +286,29 @@ onMounted(reload)
           placeholder=".Event.info"
           spellcheck="false"
         />
+
+        <!-- live path preview: does the jq compile, and what does it pull from the sample? -->
+        <div
+          v-if="isDataFiltering && pathState !== 'idle'"
+          class="flex items-baseline gap-1.5 text-2xs leading-relaxed"
+        >
+          <template v-if="pathState === 'testing'">
+            <FontAwesomeIcon :icon="faSpinner" spin class="fa-fw text-slate-400"></FontAwesomeIcon>
+            <span class="text-slate-400">checking against the sample…</span>
+          </template>
+          <template v-else-if="pathState === 'valid'">
+            <FontAwesomeIcon :icon="faCircleCheck" class="fa-fw text-green-600"></FontAwesomeIcon>
+            <span class="text-slate-500 shrink-0">extracts</span>
+            <code
+              class="font-mono text-slate-700 bg-white border border-slate-200 rounded px-1 py-0.5 break-all"
+              >{{ pathExtracted }}</code
+            >
+          </template>
+          <template v-else-if="pathState === 'error'">
+            <FontAwesomeIcon :icon="faCircleXmark" class="fa-fw text-red-600"></FontAwesomeIcon>
+            <span class="font-mono text-red-700 break-all">{{ pathError }}</span>
+          </template>
+        </div>
       </div>
 
       <!-- operator + values + remove -->
@@ -220,6 +364,12 @@ onMounted(reload)
         </button>
       </div>
 
+      <!-- plain-language restatement of the rule (builder mode only) -->
+      <p v-if="sentence" class="text-xs text-slate-500 leading-snug">
+        <span class="font-semibold text-slate-400">In plain English:</span>
+        <span class="italic">{{ sentence }}</span>
+      </p>
+
       <!-- footer: extracted preview + extract type -->
       <div class="flex items-center gap-2 flex-wrap text-xs text-slate-500">
         <label
@@ -233,7 +383,7 @@ onMounted(reload)
           />
           match all results
         </label>
-        <span v-if="extracted !== null" class="ml-auto inline-flex items-center gap-1">
+        <span v-if="extracted !== null && !isDataFiltering" class="ml-auto inline-flex items-center gap-1">
           extracted:
           <code class="font-mono bg-white border border-slate-200 text-slate-700 px-1.5 py-0.5 rounded">{{ extracted }}</code>
         </span>

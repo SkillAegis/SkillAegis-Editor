@@ -463,14 +463,19 @@ def probe_sandbox_agent(timeout: float = 0.5) -> dict:
 
 def testJqPath(path: str, data: dict, extract_type: str) -> tuple:
     inject_evaluator = loadInjectEvaluator()
-    success = True
-    result = False
+    # jq_extract() swallows compile errors and returns None, which is
+    # indistinguishable from a valid-but-empty extraction. Compile the path
+    # first so a malformed jq expression surfaces as a real error to the author
+    # instead of a silent null.
+    import jq
     try:
-        result = inject_evaluator.jq_extract(path, data, extract_type)
+        jq.compile(path)
     except ValueError as e:
-        success = False
-        result = str(e)
-    return (success, result,)
+        message = str(e).splitlines()[0] if str(e) else 'Invalid jq expression'
+        message = message.replace(' (Unix shell quoting issues?)', '')
+        return (False, message,)
+    result = inject_evaluator.jq_extract(path, data, extract_type)
+    return (True, result,)
 
 
 def fetch_data_for_query_search(misp_url, authkey, inject_evaluation):

@@ -28,7 +28,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const modelPath = resolve(here, '../src/Views/scenario-designer/evaluationModel.js')
 const modelSrc = readFileSync(modelPath, 'utf8')
 const model = await import('data:text/javascript;charset=utf-8,' + encodeURIComponent(modelSrc))
-const { buildPathFromQuery, parseQueryFromPath } = model
+const { buildPathFromQuery, parseQueryFromPath, describeCondition } = model
 
 let failures = 0
 const fail = (msg) => {
@@ -136,6 +136,55 @@ for (const p of mustFallback) {
   } else {
     console.log(`  \x1b[32m✓\x1b[0m fallback: ${p.length > 52 ? p.slice(0, 52) + '…' : p}`)
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * Part A2 — plain-language sentences (describeCondition)
+ * ------------------------------------------------------------------ */
+console.log('\nPart A2 — plain-language sentences')
+
+const sentenceCases = [
+  // [label, query, comparison, values, expected sentence]
+  [
+    'flagged example',
+    flaggedQuery,
+    'equals',
+    ['true'],
+    'Pass when, looking at every attribute in the event where its value is “194.78.89.250”, its to_ids is true.'
+  ],
+  [
+    'event field contains',
+    { source: 'event-field', eventField: 'info', filters: [], project: '' },
+    'contains',
+    ['phishing'],
+    'Pass when the event’s info contains “phishing”.'
+  ],
+  [
+    'objects count',
+    { source: 'objects', filters: [{ field: 'name', op: 'is', value: 'suricata' }], project: '*self*' },
+    'count',
+    ['>=1'],
+    'Pass when, looking at the event’s objects where its name is “suricata”, the number of matching objects is “>=1”.'
+  ],
+  [
+    'response field equals_any',
+    { source: 'resp-field', eventField: 'event_creator_email', filters: [], project: '' },
+    'equals_any',
+    ['a@x.test', 'b@x.test'],
+    'Pass when each response event’s event_creator_email is one of “a@x.test”, “b@x.test”.'
+  ]
+]
+for (const [label, query, comparison, values, expected] of sentenceCases) {
+  const got = describeCondition(query, comparison, values)
+  if (got !== expected) {
+    fail(`sentence "${label}"\n      expected: ${expected}\n      got:      ${got}`)
+  } else {
+    console.log(`  \x1b[32m✓\x1b[0m sentence: ${label}`)
+  }
+}
+// An unrecognised query yields no sentence (caller shows nothing).
+if (describeCondition({ source: 'nope' }, 'contains', ['x']) !== null) {
+  fail('sentence for unknown source should be null')
 }
 
 /* ------------------------------------------------------------------ *
@@ -293,6 +342,12 @@ if (!existsSync(scenariosDir)) {
     }
     occParsed += count
     const rebuilt = buildPathFromQuery(parsed.query)
+
+    // Every builder-mode path must also produce a plain-language sentence.
+    const sentence = describeCondition(parsed.query, 'contains', ['x'])
+    if (typeof sentence !== 'string' || sentence.length === 0) {
+      fail(`describeCondition produced no sentence for: ${path}`)
+    }
 
     // Stability: re-parsing the rebuilt path yields the same query, and it is a
     // fixed point of build∘parse.

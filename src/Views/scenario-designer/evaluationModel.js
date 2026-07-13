@@ -328,42 +328,56 @@ export function emptyCondition() {
 // FROM — the source collection. `base` is the jq prefix; `kind` drives the
 // WHERE/CHECK vocabularies. `stream` sources iterate elements (an optional
 // select() + a projected field apply); `event` sources are one scalar field.
+// `subject` (collection phrase) + `item` (singular noun) feed the plain-language
+// sentence in `describeCondition`.
 export const SOURCE_PRESETS = {
   'all-attr': {
     label: 'Every attribute in the event',
     base: '[.Event.Object[].Attribute[], .Event.Attribute[]] | .[]',
     kind: 'attr',
     stream: true,
+    subject: 'every attribute in the event',
+    item: 'attribute',
   },
   'obj-attr': {
     label: 'Attributes inside objects only',
     base: '.Event.Object[].Attribute[]',
     kind: 'attr',
     stream: true,
+    subject: 'every attribute inside an object',
+    item: 'attribute',
   },
   'top-attr': {
     label: 'Top-level attributes only',
     base: '.Event.Attribute[]',
     kind: 'attr',
     stream: true,
+    subject: 'every top-level attribute',
+    item: 'attribute',
   },
   objects: {
     label: "The event's objects",
     base: '.Event.Object[]',
     kind: 'obj',
     stream: true,
+    subject: 'the event’s objects',
+    item: 'object',
   },
   tags: {
     label: "The event's tags",
     base: '.Event.Tag[]',
     kind: 'tag',
     stream: true,
+    subject: 'the event’s tags',
+    item: 'tag',
   },
   'event-field': {
     label: 'A single field on the event',
     base: '.Event',
     kind: 'event',
     stream: false,
+    subject: 'the event',
+    item: 'event',
   },
   // Response-wrapped variants (query_search / misp_query_search). Same
   // conceptual sources, with the `.response[]` wrapper chosen for the author.
@@ -372,24 +386,32 @@ export const SOURCE_PRESETS = {
     base: '[.response[].Event.Object[].Attribute[], .response[].Event.Attribute[]] | .[]',
     kind: 'attr',
     stream: true,
+    subject: 'every attribute in the search response',
+    item: 'attribute',
   },
   'resp-obj-attr': {
     label: 'Attributes inside response objects',
     base: '.response[].Event.Object[].Attribute[]',
     kind: 'attr',
     stream: true,
+    subject: 'every attribute inside a response object',
+    item: 'attribute',
   },
   'resp-objects': {
     label: 'The response events’ objects',
     base: '.response[].Event.Object[]',
     kind: 'obj',
     stream: true,
+    subject: 'the search response’s objects',
+    item: 'object',
   },
   'resp-field': {
     label: 'A field on each response event',
     base: '.response[].Event',
     kind: 'event',
     stream: false,
+    subject: 'each response event',
+    item: 'event',
   },
 }
 
@@ -763,4 +785,110 @@ export function defaultQueryForSource(source) {
   }
   const projections = PROJECTIONS_BY_KIND[preset.kind] || ['*self*']
   return { source, eventField: 'info', filters: [], project: projections[0] }
+}
+
+/* ==========================================================================
+ * Plain-language sentence — restate a condition in English (P2).
+ * Pure + display-only: turns a recognised query + its comparison/values into a
+ * one-line paraphrase so a non-jq author can sanity-check the rule. Returns null
+ * when the query is unrecognised (the caller shows nothing in that case).
+ * ======================================================================== */
+
+// A value for display: true/false/numbers bare, everything else quoted.
+function displayValue(value) {
+  const s = String(value)
+  if (s === 'true' || s === 'false' || /^-?\d+(\.\d+)?$/.test(s)) {
+    return s
+  }
+  return '“' + s + '”'
+}
+
+function describeValues(values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    return 'a value'
+  }
+  return values.map(displayValue).join(', ')
+}
+
+// How a comparison operator + its values read as a predicate ("its X <this>").
+// `count` is handled by the caller (it reads as a quantity, not a per-item check).
+function comparisonPhrase(comparison, values) {
+  const text = describeValues(values)
+  switch (comparison) {
+    case 'contains':
+      return 'contains ' + text
+    case 'equals':
+      return (Array.isArray(values) && values.length === 1 ? 'is ' : 'equals ') + text
+    case 'equals_any':
+      return 'is one of ' + text
+    case 'regex':
+    case 'contains-regex':
+      return 'matches the pattern ' + text
+    default:
+      return comparison + ' ' + text
+  }
+}
+
+const FILTER_OP_PHRASE = {
+  is: 'is',
+  'is-one-of': 'is one of',
+  matches: 'matches',
+  contains: 'contains',
+}
+
+// The WHERE clause (" where its type is X and its to_ids is true"), or '' when
+// there is no meaningful filter.
+function describeFilters(filters) {
+  const meaningful = (filters || []).filter(isMeaningfulFilter)
+  if (meaningful.length === 0) {
+    return ''
+  }
+  const parts = meaningful.map((filter) => {
+    const op = FILTER_OP_PHRASE[filter.op] || filter.op
+    let value
+    if (filter.op === 'is-one-of') {
+      value = String(filter.value)
+        .split(',')
+        .map((v) => v.trim())
+        .filter((v) => v.length > 0)
+        .map(displayValue)
+        .join(', ')
+    } else {
+      value = displayValue(filter.value)
+    }
+    return 'its ' + filter.field + ' ' + op + ' ' + value
+  })
+  return ' where ' + parts.join(' and ')
+}
+
+// Restate a condition in plain English. `query` is the parsed FROM/WHERE/CHECK
+// object; `comparison`/`values` come from the condition. Returns null for an
+// unrecognised source.
+export function describeCondition(query, comparison, values) {
+  if (!query || typeof query !== 'object') {
+    return null
+  }
+  const preset = SOURCE_PRESETS[query.source]
+  if (!preset) {
+    return null
+  }
+  // Scalar event field — the field itself is the subject.
+  if (preset.kind === 'event') {
+    const field = query.eventField || '(field)'
+    const owner = query.source === 'resp-field' ? 'each response event’s ' : 'the event’s '
+    return 'Pass when ' + owner + field + ' ' + comparisonPhrase(comparison, values) + '.'
+  }
+  const subject = preset.subject || preset.label.toLowerCase()
+  const where = describeFilters(query.filters)
+  const projected = query.project && query.project !== '*self*'
+  if (comparison === 'count') {
+    const what = projected
+      ? 'the ' + query.project + ' of the matching ' + (preset.item || 'item') + 's'
+      : 'the number of matching ' + (preset.item || 'item') + 's'
+    return 'Pass when, looking at ' + subject + where + ', ' + what + ' is ' + describeValues(values) + '.'
+  }
+  const check = projected
+    ? 'its ' + query.project + ' ' + comparisonPhrase(comparison, values)
+    : 'each ' + (preset.item || 'item') + ' ' + comparisonPhrase(comparison, values)
+  return 'Pass when, looking at ' + subject + where + ', ' + check + '.'
 }

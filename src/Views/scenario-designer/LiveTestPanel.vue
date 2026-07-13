@@ -40,7 +40,12 @@ const OUTCOME_WAITING = 4
 
 const TEST_GROUP_COLORS = ['cyan', 'amber', 'blue', 'pink', 'violet', 'green']
 
-const testData = ref('{\n  "Event": {\n    "info": ""\n  }\n}')
+// The sample data the rule runs against. Owned by the parent (EvaluationBuilder)
+// so the per-condition path preview can reuse the very same sample.
+const testData = defineModel('testData', {
+  type: String,
+  default: '{\n  "Event": {\n    "info": ""\n  }\n}',
+})
 const mispUrl = ref('https://localhost/')
 const mispApikey = ref('')
 
