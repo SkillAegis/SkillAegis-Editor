@@ -49,7 +49,15 @@ const testError = ref(null)
 
 const strategy = computed(() => props.evaluation.evaluation_strategy)
 const canLiveTest = computed(() => isLiveTestable(strategy.value))
-const needsTarget = computed(() => strategy.value === 'query_search' || isPythonStrategy(strategy.value))
+// A live MISP connection is only meaningful when there is actually a MISP query
+// to run: query_search always, and python only under the MISP tool (its data is
+// the query result). For the webhook tool python's data is the payload — i.e.
+// the Sample data box — so no connection fields are shown.
+const needsTarget = computed(
+  () =>
+    strategy.value === 'query_search' ||
+    (isPythonStrategy(strategy.value) && props.targetTool === 'MISP')
+)
 
 // Only the `python` strategy needs the Docker-backed sandbox agent. Probe its
 // readiness so the author is warned upfront instead of only via a 503 after
@@ -313,6 +321,10 @@ async function runJqPath() {
               placeholder="API key"
             />
           </div>
+          <p v-if="isPythonStrategy(strategy)" class="text-xs text-slate-500">
+            Optional — fill in to run this inject's query against live MISP and feed the result to
+            your function; leave blank to use the Sample data below.
+          </p>
         </div>
 
         <!-- Sample data -->
