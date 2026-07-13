@@ -11,12 +11,14 @@ import {
 } from '@fortawesome/free-solid-svg-icons'
 import ConditionRow from '@/Views/scenario-designer/ConditionRow.vue'
 import LiveTestPanel from '@/Views/scenario-designer/LiveTestPanel.vue'
+import StrategyHelp from '@/Views/scenario-designer/StrategyHelp.vue'
 import InjectEvaluationPythonEditorWrapper from '@/components/InjectEvaluationPythonEditorWrapper.vue'
 import {
   ALLOWED_STRATEGIES_FOR_TOOLS,
   conditionsFromParameters,
   parametersFromConditions,
   emptyCondition,
+  getStrategyInfo,
   isComparisonStrategy,
   isPythonStrategy,
   usesQueryContext,
@@ -55,6 +57,12 @@ const strategyOptions = computed(() => {
   }
   return options
 })
+
+// Human-friendly label for a strategy option (falls back to the raw key).
+function strategyLabel(strat) {
+  const info = getStrategyInfo(strat, props.targetTool)
+  return info ? info.title : strat
+}
 
 /* ---- condition builder <-> parameters sync ---- */
 const localConditions = ref([])
@@ -221,7 +229,7 @@ function extractedFor(i) {
                 :value="strat"
                 :title="info"
               >
-                {{ strat }}
+                {{ strategyLabel(strat) }} · {{ strat }}
               </option>
             </select>
           </div>
@@ -245,6 +253,9 @@ function extractedFor(i) {
             />
           </div>
         </div>
+
+        <!-- what this strategy does -->
+        <StrategyHelp :strategy="strategy" :target-tool="targetTool"></StrategyHelp>
 
         <!-- parameters -->
         <div>

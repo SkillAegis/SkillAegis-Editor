@@ -33,6 +33,96 @@ export const ALLOWED_STRATEGIES_FOR_TOOLS = {
   },
 }
 
+// Plain-language explanation of every evaluation strategy, shown next to the
+// strategy selector so authors understand *what data gets checked* and *what
+// they have to configure* — the two things the raw strategy key never conveys.
+//
+// This mirrors the runtime behaviour in SkillAegis-Dashboard
+// (backend/target_tools/<tool>/exercise.py + backend/utils.py). Keep it in sync
+// if the engine changes. `byTool` overrides the `source` line per target tool;
+// `youConfigure` describes what the author fills in below.
+export const STRATEGY_INFO = {
+  data_filtering: {
+    title: 'Inspect the resulting data',
+    summary:
+      'Checks your conditions straight against the data the trainee produced — no extra query is run.',
+    youConfigure: 'a list of conditions (jq path → operator → values)',
+    defaultSource: 'The data the trainee produced.',
+    byTool: {
+      MISP: {
+        source:
+          'The MISP event the trainee created or edited. SkillAegis reads the event id from the MISP audit log and fetches the whole event back from MISP.',
+      },
+      webhook: {
+        source: "The raw JSON payload the trainee's tool sent to the webhook endpoint.",
+      },
+    },
+    example: '.Event.info  contains  "phishing"',
+  },
+  query_search: {
+    title: 'Run a search, then check the result',
+    summary:
+      'SkillAegis runs a search you define against MISP and checks your conditions against the response — no matter which action the trainee took to get there.',
+    youConfigure: 'a Query context (URL, method, payload) + conditions on its result',
+    defaultSource: 'The response of the MISP REST search you define in "Query context" below.',
+    needsContext: true,
+    note: 'This is the only MISP strategy besides Python that can run on a timer (periodic / triggered at).',
+    example: '.response[].Event.info  regex  ".*phishing.*"',
+  },
+  misp_query_search: {
+    title: 'Search MISP using the webhook data',
+    summary:
+      'Fills a MISP search with values pulled from the incoming webhook payload ({{placeholders}}), runs it, then checks your conditions against the result.',
+    youConfigure: 'a Query context with {{placeholders}} + conditions on its result',
+    defaultSource: 'The response of a MISP REST search built from the incoming webhook data.',
+    needsContext: true,
+    example: '.response[].Event.info  contains  "{{.alert.name}}"',
+  },
+  query_mirror: {
+    title: "Match the trainee's query",
+    summary:
+      "Replays the trainee's exact query against MISP, runs your reference query too, and passes only if both return identical results.",
+    youConfigure: 'a reference query to compare against (no conditions)',
+    defaultSource:
+      "Two MISP query results compared for equality — the trainee's query vs. your reference query.",
+    needsContext: true,
+    note: 'This is a strict equality check, not conditions. Put the reference query body in the raw "Query payload" box and its URL/method under "Query context".',
+  },
+  simulate_ips: {
+    title: 'Simulate IPS — did an alert fire?',
+    summary:
+      "Pulls the trainee's Suricata rules from MISP, replays sample traffic through Suricata in IPS mode, and checks your conditions against the alerts that fired.",
+    youConfigure: 'conditions on the fired-alert list',
+    defaultSource:
+      "The list of Suricata alerts that fired (verdict = drop) when the trainee's rules ran against the sample traffic.",
+    example: '.[].alert.signature  contains  "malware"',
+  },
+  python: {
+    title: 'Custom Python check',
+    summary:
+      "Runs your Python function in a sandbox with the data and context. Return True to pass. Reach for this when the condition builder can't express the check.",
+    youConfigure: 'a Python function that returns True / False',
+    defaultSource:
+      'Whatever the tool provides (the MISP query result, or the webhook payload), handed to your function.',
+  },
+}
+
+// Merge the base strategy info with any tool-specific override. Returns null for
+// an unknown strategy so the caller can fall back gracefully.
+export function getStrategyInfo(strategy, tool) {
+  const base = STRATEGY_INFO[strategy]
+  if (!base) {
+    return null
+  }
+  const override = (base.byTool && base.byTool[tool]) || {}
+  return {
+    key: strategy,
+    ...base,
+    ...override,
+    source: override.source || base.defaultSource,
+  }
+}
+
 export const ALLOWED_TRIGGERS = {
   manual: 'Manually trigger by external tools',
   startex: 'Start of the exercise',
