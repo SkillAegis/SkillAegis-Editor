@@ -8,10 +8,12 @@ import {
   faCode,
   faListCheck,
   faTriangleExclamation,
+  faCircleQuestion,
 } from '@fortawesome/free-solid-svg-icons'
 import ConditionRow from '@/Views/scenario-designer/ConditionRow.vue'
 import LiveTestPanel from '@/Views/scenario-designer/LiveTestPanel.vue'
 import StrategyHelp from '@/Views/scenario-designer/StrategyHelp.vue'
+import ComparisonOperatorsHelp from '@/Views/scenario-designer/ComparisonOperatorsHelp.vue'
 import InjectEvaluationPythonEditorWrapper from '@/components/InjectEvaluationPythonEditorWrapper.vue'
 import {
   ALLOWED_STRATEGIES_FOR_TOOLS,
@@ -140,6 +142,7 @@ onMounted(() => {
 
 /* ---- context editor ---- */
 const showContext = ref(usesQueryContext(strategy.value))
+const showOperatorsHelp = ref(false)
 
 /* ---- per-condition verdicts from the live test ---- */
 const lastResultData = ref(null)
@@ -257,12 +260,27 @@ function extractedFor(i) {
         <!-- what this strategy does -->
         <StrategyHelp :strategy="strategy" :target-tool="targetTool"></StrategyHelp>
 
+        <ComparisonOperatorsHelp
+          :show="showOperatorsHelp"
+          @close="showOperatorsHelp = false"
+        ></ComparisonOperatorsHelp>
+
         <!-- parameters -->
         <div>
           <div class="flex items-center gap-2 mb-1">
             <label class="text-sm font-bold text-gray-700">
               {{ isPython ? 'Python function' : isQueryMirror ? 'Query payload' : 'Conditions' }}
             </label>
+            <button
+              v-if="isComparison"
+              type="button"
+              class="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 select-none hover:text-blue-900"
+              @click="showOperatorsHelp = true"
+              title="What each comparison operator does"
+            >
+              <FontAwesomeIcon :icon="faCircleQuestion" class="fa-fw"></FontAwesomeIcon>
+              operators
+            </button>
             <button
               v-if="isComparison"
               type="button"
