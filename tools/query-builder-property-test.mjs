@@ -98,6 +98,41 @@ const cases = [
       project: 'distribution'
     },
     '.Event.Attribute[] | select(.type == "text" and .value == "Classified information").distribution'
+  ],
+  [
+    'two-level: object name + attr type, project value',
+    {
+      source: 'named-obj-attr',
+      objectFilters: [{ field: 'name', op: 'is', value: 'domain-ip' }],
+      filters: [{ field: 'type', op: 'is', value: 'ip' }],
+      project: 'value'
+    },
+    '.Event.Object[] | select(.name == "domain-ip") | .Attribute[] | select(.type == "ip").value'
+  ],
+  [
+    'two-level: object is-one-of, no attr filter, project value',
+    {
+      source: 'named-obj-attr',
+      objectFilters: [{ field: 'name', op: 'is-one-of', value: 'domain-ip, ip-port' }],
+      filters: [],
+      project: 'value'
+    },
+    '.Event.Object[] | select((.name == "domain-ip" or .name == "ip-port")) | .Attribute[].value'
+  ],
+  [
+    'two-level: response variant, object_relation filter',
+    {
+      source: 'resp-named-obj-attr',
+      objectFilters: [{ field: 'name', op: 'is', value: 'url' }],
+      filters: [{ field: 'object_relation', op: 'is', value: 'ip' }],
+      project: 'value'
+    },
+    '.response[].Event.Object[] | select(.name == "url") | .Attribute[] | select(.object_relation == "ip").value'
+  ],
+  [
+    'two-level: no object filter degenerates to flat obj-attr base',
+    { source: 'named-obj-attr', objectFilters: [], filters: [], project: 'value' },
+    '.Event.Object[].Attribute[].value'
   ]
 ]
 
@@ -121,14 +156,18 @@ for (const [label, query, expected] of cases) {
   console.log(`  \x1b[32m✓\x1b[0m ${label}`)
 }
 
-// paths that MUST fall back to raw (out of P1 grammar scope)
+// paths that MUST fall back to raw (out of grammar scope)
 const mustFallback = [
   '._secret',
   '.[].verdict.action',
   '.Event.Tag | select(length > 0) | .[].name',
-  '.Event.Object[] | select(.name == "url") | .Attribute[] | select((.type == "url")).value',
   '.Event.Attribute | map(select(has("Tag"))) | length',
-  '.Event.Attribute[] | select(.value == "x") | .Tag[].name'
+  // attr → tag: a select feeding a second-level projection into .Tag[]
+  '.Event.Attribute[] | select(.value == "x") | .Tag[].name',
+  // union embedding a scoped object select — more than the two-level drill
+  '[(.Event.Object[] | select((.name == "email")).Attribute[]), .Event.Attribute[]] | .[].value',
+  // three-level: object select → attribute select → tag projection
+  '.Event.Object[] | select(.name == "url") | .Attribute[] | select(.type == "url") | .Tag[].name'
 ]
 for (const p of mustFallback) {
   if (parseQueryFromPath(p).ok) {
@@ -172,6 +211,18 @@ const sentenceCases = [
     'equals_any',
     ['a@x.test', 'b@x.test'],
     'Pass when each response event’s event_creator_email is one of “a@x.test”, “b@x.test”.'
+  ],
+  [
+    'two-level object→attribute',
+    {
+      source: 'named-obj-attr',
+      objectFilters: [{ field: 'name', op: 'is', value: 'domain-ip' }],
+      filters: [{ field: 'type', op: 'is', value: 'ip' }],
+      project: 'value'
+    },
+    'equals',
+    ['9.9.9.9'],
+    'Pass when, looking at every attribute inside an object whose name is “domain-ip” where its type is “ip”, its value is “9.9.9.9”.'
   ]
 ]
 for (const [label, query, comparison, values, expected] of sentenceCases) {

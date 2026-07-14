@@ -319,10 +319,12 @@ export function emptyCondition() {
  * to the canonical `select(.type == "x").field`. The library property test
  * (tools/query-builder-property-test.mjs) enforces this with jq.
  *
- * P1 scope: single-level sources only. Two-level object→attribute selects
- * (`.Event.Object[] | select(.name=="url") | .Attribute[] | select(...)`),
- * multi-level projections (`.Tag[].name`), and map/group_by pipelines are
- * intentionally NOT recognised — they round-trip verbatim to the raw field.
+ * Sources are the single-level shapes plus the two-level object→attribute
+ * drill (`.Event.Object[] | select(.name=="url") | .Attribute[] | select(...)`):
+ * pick the objects, then treat their `.Attribute[]` as an attribute stream.
+ * Still intentionally NOT recognised — these round-trip verbatim to the raw
+ * field: multi-level projections (`.Tag[].name`), a select after a projection,
+ * unions embedding a scoped select, and map/group_by pipelines.
  * ======================================================================== */
 
 // FROM — the source collection. `base` is the jq prefix; `kind` drives the
@@ -345,6 +347,19 @@ export const SOURCE_PRESETS = {
     kind: 'attr',
     stream: true,
     subject: 'every attribute inside an object',
+    item: 'attribute',
+  },
+  // Two-level drill: filter which objects first, then their attributes. `objBase`
+  // is the object collection; the WHERE/CHECK vocabularies come from `kind`
+  // (attr, the *final* level), and the object-level filter lives in the query's
+  // `objectFilters`. Excluded from the single-level stream loop (`stream: false`)
+  // and parsed by `parseObjAttrPath` instead.
+  'named-obj-attr': {
+    label: 'Attributes inside a specific object',
+    objBase: '.Event.Object[]',
+    kind: 'attr',
+    stream: false,
+    twoLevel: true,
     item: 'attribute',
   },
   'top-attr': {
@@ -395,6 +410,14 @@ export const SOURCE_PRESETS = {
     kind: 'attr',
     stream: true,
     subject: 'every attribute inside a response object',
+    item: 'attribute',
+  },
+  'resp-named-obj-attr': {
+    label: 'Attributes inside a specific response object',
+    objBase: '.response[].Event.Object[]',
+    kind: 'attr',
+    stream: false,
+    twoLevel: true,
     item: 'attribute',
   },
   'resp-objects': {
@@ -568,6 +591,22 @@ function isMeaningfulFilter(filter) {
   return filter && (filter.value !== '' || filter.op === 'matches')
 }
 
+// A select() over a filter list ("select(A and B)").
+function selectClause(filters) {
+  return 'select(' + filters.map(filterToJq).join(' and ') + ')'
+}
+
+// Serialise a stream base's WHERE/CHECK tail: an optional " | select(...)" and
+// an optional ".<field>" projection.
+function streamTail(base, rawFilters, project) {
+  const projSuffix = !project || project === '*self*' ? '' : '.' + project
+  const filters = (rawFilters || []).filter(isMeaningfulFilter)
+  if (filters.length > 0) {
+    return base + ' | ' + selectClause(filters) + projSuffix
+  }
+  return projSuffix ? base + projSuffix : base
+}
+
 // Serialise a query object to its canonical jq path string. Returns null for
 // an unknown source.
 export function buildPathFromQuery(query) {
@@ -581,13 +620,18 @@ export function buildPathFromQuery(query) {
   if (preset.kind === 'event') {
     return preset.base + '.' + (query.eventField || '')
   }
-  const projSuffix = !query.project || query.project === '*self*' ? '' : '.' + query.project
-  const filters = (query.filters || []).filter(isMeaningfulFilter)
-  if (filters.length > 0) {
-    const select = 'select(' + filters.map(filterToJq).join(' and ') + ')'
-    return preset.base + ' | ' + select + projSuffix
+  if (preset.twoLevel) {
+    // objBase | select(<objectFilters>) | .Attribute[] + attribute tail. With no
+    // object filter it degenerates to the flat "objects' attributes" base
+    // (`.Event.Object[].Attribute[]`), which is semantically identical.
+    const objFilters = (query.objectFilters || []).filter(isMeaningfulFilter)
+    const base =
+      objFilters.length > 0
+        ? preset.objBase + ' | ' + selectClause(objFilters) + ' | .Attribute[]'
+        : preset.objBase + '.Attribute[]'
+    return streamTail(base, query.filters, query.project)
   }
-  return projSuffix ? preset.base + projSuffix : preset.base
+  return streamTail(preset.base, query.filters, query.project)
 }
 
 // Parse a single conjunction term of a select() body into a filter, or null.
@@ -642,11 +686,10 @@ function parseSelectBody(body) {
   return filters
 }
 
-// Peel " | select(<body>)" (+ optional ".<ident>" projection) off `rest`.
-// Uses a balanced, quote-aware scan for the matching ")". Returns
-// { body, project } or null.
-function peelSelect(rest) {
-  const prefix = ' | select('
+// Peel a "<prefix>…)" whose prefix ends in "(", using a balanced, quote-aware
+// scan for the matching ")". Returns { body, after } — the text inside the
+// parens and everything past the ")" — or null.
+function scanBalanced(rest, prefix) {
   if (!rest.startsWith(prefix)) {
     return null
   }
@@ -679,19 +722,27 @@ function peelSelect(rest) {
   if (close === -1) {
     return null
   }
-  const body = rest.slice(open + 1, close)
-  const after = rest.slice(close + 1)
+  return { body: rest.slice(open + 1, close), after: rest.slice(close + 1) }
+}
+
+// Peel " | select(<body>)" (+ optional ".<ident>" projection) off `rest`.
+// Returns { body, project } or null.
+function peelSelect(rest) {
+  const scanned = scanBalanced(rest, ' | select(')
+  if (!scanned) {
+    return null
+  }
   let project = '*self*'
-  if (after !== '') {
+  if (scanned.after !== '') {
     // Accept both canonical "select(...).field" and the equivalent
     // "select(...) | .field" pipe form (normalised to the former, see §7.1).
-    const m = after.match(/^(?: \| )?\.([A-Za-z_]\w*)$/)
+    const m = scanned.after.match(/^(?: \| )?\.([A-Za-z_]\w*)$/)
     if (!m) {
       return null
     }
     project = m[1]
   }
-  return { body, project }
+  return { body: scanned.body, project }
 }
 
 // Parse what follows a stream preset's base: "" | ".<proj>" | select(...)[.proj].
@@ -720,6 +771,50 @@ const STREAM_PRESETS_LONGEST_FIRST = Object.entries(SOURCE_PRESETS)
   .filter(([, preset]) => preset.stream)
   .sort((a, b) => b[1].base.length - a[1].base.length)
 
+// Two-level object→attribute presets, longest objBase first (so the response
+// variant is tried before the plain one — they don't prefix each other, but the
+// ordering is harmless and future-proof).
+const OBJATTR_PRESETS_LONGEST_FIRST = Object.entries(SOURCE_PRESETS)
+  .filter(([, preset]) => preset.twoLevel)
+  .sort((a, b) => b[1].objBase.length - a[1].objBase.length)
+
+// Recognise a two-level object→attribute drill:
+//   <objBase> | select(<objectFilters>) [|] .Attribute[] <attribute tail>
+// The bridge between the object select and .Attribute[] appears in the library
+// in two semantically-equal syntaxes — " | .Attribute[]" (pipe) and
+// ".Attribute[]" (dot, straight off the select) — both accepted; the attribute
+// tail is the same stream grammar as a single-level source. Returns { ok, query }
+// or null (so parseQueryFromPath can fall through to the single-level loop).
+function parseObjAttrPath(p) {
+  for (const [key, preset] of OBJATTR_PRESETS_LONGEST_FIRST) {
+    if (!p.startsWith(preset.objBase)) {
+      continue
+    }
+    const scanned = scanBalanced(p.slice(preset.objBase.length), ' | select(')
+    if (!scanned) {
+      continue
+    }
+    const objectFilters = parseSelectBody(scanned.body)
+    if (!objectFilters) {
+      continue
+    }
+    let attrRest
+    if (scanned.after.startsWith(' | .Attribute[]')) {
+      attrRest = scanned.after.slice(' | .Attribute[]'.length)
+    } else if (scanned.after.startsWith('.Attribute[]')) {
+      attrRest = scanned.after.slice('.Attribute[]'.length)
+    } else {
+      continue
+    }
+    const rest = parseStreamRest(attrRest)
+    if (!rest) {
+      continue
+    }
+    return { ok: true, query: { source: key, objectFilters, ...rest } }
+  }
+  return null
+}
+
 // Recognise a stored jq path as a query, or return { ok:false } for the raw
 // fallback. Never throws; never rewrites the input.
 export function parseQueryFromPath(path) {
@@ -741,6 +836,12 @@ export function parseQueryFromPath(path) {
       ok: true,
       query: { source: 'event-field', eventField: m[1], filters: [], project: '' },
     }
+  }
+  // Two-level object→attribute drill (an object select feeding into .Attribute[]).
+  // Tried before the single-level loop, which would otherwise reject it.
+  const objAttr = parseObjAttrPath(p)
+  if (objAttr) {
+    return objAttr
   }
   for (const [key, preset] of STREAM_PRESETS_LONGEST_FIRST) {
     if (p === preset.base) {
@@ -784,6 +885,16 @@ export function defaultQueryForSource(source) {
     return { source: source || 'event-field', eventField: 'info', filters: [], project: '' }
   }
   const projections = PROJECTIONS_BY_KIND[preset.kind] || ['*self*']
+  if (preset.twoLevel) {
+    // Seed the object-level filter — "attributes inside a specific object" is
+    // only meaningful once you say which object.
+    return {
+      source,
+      objectFilters: [{ field: 'name', op: 'is', value: '' }],
+      filters: [],
+      project: projections[0],
+    }
+  }
   return { source, eventField: 'info', filters: [], project: projections[0] }
 }
 
@@ -836,6 +947,25 @@ const FILTER_OP_PHRASE = {
   contains: 'contains',
 }
 
+// One filter as an English clause ("<subject> type is X"). `subject` is the
+// possessive that leads it ('its' for the streamed item, 'whose' for the object
+// in a two-level drill).
+function filterPhrase(filter, subject) {
+  const op = FILTER_OP_PHRASE[filter.op] || filter.op
+  let value
+  if (filter.op === 'is-one-of') {
+    value = String(filter.value)
+      .split(',')
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0)
+      .map(displayValue)
+      .join(', ')
+  } else {
+    value = displayValue(filter.value)
+  }
+  return (subject ? subject + ' ' : '') + filter.field + ' ' + op + ' ' + value
+}
+
 // The WHERE clause (" where its type is X and its to_ids is true"), or '' when
 // there is no meaningful filter.
 function describeFilters(filters) {
@@ -843,22 +973,7 @@ function describeFilters(filters) {
   if (meaningful.length === 0) {
     return ''
   }
-  const parts = meaningful.map((filter) => {
-    const op = FILTER_OP_PHRASE[filter.op] || filter.op
-    let value
-    if (filter.op === 'is-one-of') {
-      value = String(filter.value)
-        .split(',')
-        .map((v) => v.trim())
-        .filter((v) => v.length > 0)
-        .map(displayValue)
-        .join(', ')
-    } else {
-      value = displayValue(filter.value)
-    }
-    return 'its ' + filter.field + ' ' + op + ' ' + value
-  })
-  return ' where ' + parts.join(' and ')
+  return ' where ' + meaningful.map((f) => filterPhrase(f, 'its')).join(' and ')
 }
 
 // Restate a condition in plain English. `query` is the parsed FROM/WHERE/CHECK
@@ -878,7 +993,18 @@ export function describeCondition(query, comparison, values) {
     const owner = query.source === 'resp-field' ? 'each response event’s ' : 'the event’s '
     return 'Pass when ' + owner + field + ' ' + comparisonPhrase(comparison, values) + '.'
   }
-  const subject = preset.subject || preset.label.toLowerCase()
+  let subject
+  if (preset.twoLevel) {
+    // "every attribute inside an object whose name is X" — the object filter
+    // qualifies the subject; the attribute filter still reads as the WHERE.
+    const objMeaningful = (query.objectFilters || []).filter(isMeaningfulFilter)
+    const inside = objMeaningful.length
+      ? 'an object whose ' + objMeaningful.map((f) => filterPhrase(f, '')).join(' and ')
+      : 'any object'
+    subject = 'every attribute inside ' + inside
+  } else {
+    subject = preset.subject || preset.label.toLowerCase()
+  }
   const where = describeFilters(query.filters)
   const projected = query.project && query.project !== '*self*'
   if (comparison === 'count') {

@@ -33,12 +33,18 @@ const OP_LABELS = {
   contains: 'contains',
 }
 
-const kind = computed(() => SOURCE_PRESETS[query.value.source]?.kind || 'event')
+const preset = computed(() => SOURCE_PRESETS[query.value.source])
+const kind = computed(() => preset.value?.kind || 'event')
 const isEvent = computed(() => kind.value === 'event')
 const isResponse = computed(() => query.value.source?.startsWith('resp-'))
+// Two-level object→attribute source: an extra object-level filter picks which
+// objects to dive into before the WHERE/CHECK run on their attributes.
+const isTwoLevel = computed(() => !!preset.value?.twoLevel)
 
 const filterFields = computed(() => FILTER_FIELDS_BY_KIND[kind.value] || [])
 const projections = computed(() => PROJECTIONS_BY_KIND[kind.value] || [])
+// The object level always uses the object vocabulary (kind = 'obj').
+const objectFilterFields = FILTER_FIELDS_BY_KIND.obj || []
 
 // FROM options for the strategy, guaranteeing the stored source stays visible.
 const sourceOptions = computed(() => {
@@ -56,11 +62,14 @@ function projectionLabel(projection) {
   return projection === '*self*' ? '(the item itself)' : '.' + projection
 }
 
-// Switching FROM keeps filters/projection when the kind is unchanged (e.g.
-// all-attr → obj-attr) and resets them when the kind changes.
+// Switching FROM keeps filters/projection when the kind AND the level are
+// unchanged (e.g. all-attr → obj-attr); crossing the single/two-level boundary
+// (or changing kind) reshapes the query, so reset it to the source's default.
 function onSourceChange(newSource) {
-  const newKind = SOURCE_PRESETS[newSource]?.kind
-  if (newKind === kind.value) {
+  const next = SOURCE_PRESETS[newSource]
+  const sameKind = next?.kind === kind.value
+  const sameLevel = !!next?.twoLevel === isTwoLevel.value
+  if (sameKind && sameLevel) {
     query.value = { ...query.value, source: newSource }
   } else {
     query.value = defaultQueryForSource(newSource)
@@ -73,6 +82,17 @@ function addFilter() {
 
 function removeFilter(index) {
   query.value.filters.splice(index, 1)
+}
+
+function addObjectFilter() {
+  if (!Array.isArray(query.value.objectFilters)) {
+    query.value.objectFilters = []
+  }
+  query.value.objectFilters.push({ field: objectFilterFields[0] || 'name', op: 'is', value: '' })
+}
+
+function removeObjectFilter(index) {
+  query.value.objectFilters.splice(index, 1)
 }
 </script>
 
@@ -107,6 +127,68 @@ function removeFilter(index) {
             spellcheck="false"
           />
         </div>
+
+        <!-- object-level filter (two-level sources): which objects to dive into -->
+        <div v-if="isTwoLevel" class="flex flex-col gap-1.5 rounded bg-violet-50 border border-violet-100 p-1.5">
+          <div class="flex items-center gap-2">
+            <span
+              class="font-mono text-2xs font-bold text-white bg-violet-500 rounded px-1 py-0.5 leading-none"
+              >IN OBJECT</span
+            >
+            <span class="text-xs font-semibold text-slate-600">Dive into objects where…</span>
+          </div>
+          <p v-if="(query.objectFilters || []).length === 0" class="text-2xs text-amber-600 italic">
+            No object filter — this looks at every object's attributes.
+          </p>
+          <template v-for="(objFilter, oi) in query.objectFilters" :key="oi">
+            <div v-if="oi > 0" class="text-2xs font-bold text-slate-400 text-center leading-none">
+              AND
+            </div>
+            <div class="flex items-center gap-1.5">
+              <select
+                v-model="objFilter.field"
+                class="shadow-sm border border-slate-300 rounded py-1 px-1 text-xs font-mono text-red-700 leading-tight focus:outline-none focus:border-slate-400 bg-white shrink-0 w-28"
+              >
+                <option v-for="f in objectFilterFields" :key="f" :value="f">.{{ f }}</option>
+                <option v-if="!objectFilterFields.includes(objFilter.field)" :value="objFilter.field">
+                  .{{ objFilter.field }}
+                </option>
+              </select>
+              <select
+                v-model="objFilter.op"
+                class="shadow-sm border border-slate-300 rounded py-1 px-1 text-xs text-gray-700 leading-tight focus:outline-none focus:border-slate-400 bg-white shrink-0 w-28"
+              >
+                <option v-for="op in QUERY_FILTER_OPS" :key="op" :value="op">
+                  {{ OP_LABELS[op] }}
+                </option>
+              </select>
+              <input
+                type="text"
+                v-model="objFilter.value"
+                class="shadow-sm border border-slate-300 font-mono text-xs text-slate-700 grow rounded py-1 px-2 leading-tight focus:outline-none focus:border-slate-400 bg-white min-w-[4rem]"
+                :placeholder="objFilter.op === 'is-one-of' ? 'url, domain-ip' : 'object name'"
+                spellcheck="false"
+              />
+              <button
+                type="button"
+                class="btn btn-sm btn-danger select-none shrink-0 !px-1.5"
+                title="Remove object filter"
+                @click="removeObjectFilter(oi)"
+              >
+                <FontAwesomeIcon :icon="faXmark" class="fa-fw"></FontAwesomeIcon>
+              </button>
+            </div>
+          </template>
+          <div>
+            <button
+              type="button"
+              class="inline-flex items-center gap-1 text-xs font-semibold text-violet-700 hover:text-violet-900 select-none"
+              @click="addObjectFilter()"
+            >
+              <FontAwesomeIcon :icon="faPlus" class="fa-fw"></FontAwesomeIcon> Add object filter
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -117,7 +199,9 @@ function removeFilter(index) {
           class="font-mono text-2xs font-bold text-white bg-amber-500 rounded px-1 py-0.5 leading-none"
           >WHERE</span
         >
-        <span class="text-xs font-bold text-slate-600">Keep only the ones where…</span>
+        <span class="text-xs font-bold text-slate-600">{{
+          isTwoLevel ? 'Then keep only the attributes where…' : 'Keep only the ones where…'
+        }}</span>
         <span class="text-2xs text-slate-400 ml-auto">optional · all AND together</span>
       </div>
       <div class="p-2 flex flex-col gap-1.5">
