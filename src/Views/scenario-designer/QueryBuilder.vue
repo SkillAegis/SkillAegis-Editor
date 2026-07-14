@@ -24,6 +24,12 @@ const props = defineProps({
     type: String,
     default: 'data_filtering',
   },
+  // Target tool scopes the FROM options too: webhook/suricata payloads are not
+  // MISP events (webhook → payload sources, suricata → the alert list).
+  tool: {
+    type: String,
+    default: 'MISP',
+  },
 })
 
 const OP_LABELS = {
@@ -37,18 +43,23 @@ const preset = computed(() => SOURCE_PRESETS[query.value.source])
 const kind = computed(() => preset.value?.kind || 'event')
 const isEvent = computed(() => kind.value === 'event')
 const isResponse = computed(() => query.value.source?.startsWith('resp-'))
+// A payload root field (webhook): a scalar `.<field>` on the payload itself.
+const isRoot = computed(() => !!preset.value?.root)
 // Two-level object→attribute source: an extra object-level filter picks which
 // objects to dive into before the WHERE/CHECK run on their attributes.
 const isTwoLevel = computed(() => !!preset.value?.twoLevel)
+// A bare list item has no fixed schema, so the CHECK field is typed free-hand
+// (`.dest_ip`, `.verdict.action`, `.Workflow.name`, …) rather than picked.
+const freeProject = computed(() => !!preset.value?.freeProject)
 
 const filterFields = computed(() => FILTER_FIELDS_BY_KIND[kind.value] || [])
 const projections = computed(() => PROJECTIONS_BY_KIND[kind.value] || [])
 // The object level always uses the object vocabulary (kind = 'obj').
 const objectFilterFields = FILTER_FIELDS_BY_KIND.obj || []
 
-// FROM options for the strategy, guaranteeing the stored source stays visible.
+// FROM options for the strategy + tool, guaranteeing the stored source stays visible.
 const sourceOptions = computed(() => {
-  const options = sourceOptionsForStrategy(props.strategy)
+  const options = sourceOptionsForStrategy(props.strategy, props.tool)
   if (query.value.source && !options.some((o) => o.key === query.value.source)) {
     const preset = SOURCE_PRESETS[query.value.source]
     options.push({ key: query.value.source, label: preset ? preset.label : query.value.source })
@@ -123,7 +134,7 @@ function removeObjectFilter(index) {
             type="text"
             v-model="query.eventField"
             class="shadow-sm border border-slate-300 font-mono text-sm text-red-700 w-full rounded py-1 px-2 leading-tight focus:outline-none focus:border-slate-400 bg-white"
-            :placeholder="isResponse ? 'event_creator_email' : 'info'"
+            :placeholder="isRoot ? '_secret' : isResponse ? 'event_creator_email' : 'info'"
             spellcheck="false"
           />
         </div>
@@ -269,7 +280,19 @@ function removeObjectFilter(index) {
         <span class="text-xs font-bold text-slate-600">Then check…</span>
       </div>
       <div class="p-2">
+        <!-- open-ended item field (Suricata alert / workflow entry): typed free-hand -->
+        <div v-if="freeProject" class="flex items-center gap-2">
+          <span class="font-mono text-sm text-slate-400 shrink-0">.</span>
+          <input
+            type="text"
+            v-model="query.project"
+            class="shadow-sm border border-slate-300 font-mono text-sm text-gray-700 w-full rounded py-1 px-2 leading-tight focus:outline-none focus:border-slate-400 bg-white"
+            placeholder="dest_ip, verdict.action, … (blank = the item itself)"
+            spellcheck="false"
+          />
+        </div>
         <select
+          v-else
           v-model="query.project"
           class="shadow-sm border border-slate-300 w-full rounded py-1 px-2 text-sm font-mono text-gray-700 leading-tight focus:outline-none focus:border-slate-400 bg-white"
         >

@@ -157,6 +157,41 @@ const cases = [
     'notes: project .note',
     { source: 'notes', filters: [], project: 'note' },
     '.Event.Note[].note'
+  ],
+  // Non-MISP payloads (tool-agnostic sources).
+  [
+    'webhook: payload root field',
+    { source: 'webhook-field', eventField: '_secret', filters: [], project: '' },
+    '._secret'
+  ],
+  [
+    'list-items: project a field (suricata alert)',
+    { source: 'list-items', filters: [], project: 'dest_ip' },
+    '.[].dest_ip'
+  ],
+  [
+    'list-items: dotted projection (nested field)',
+    { source: 'list-items', filters: [], project: 'verdict.action' },
+    '.[].verdict.action'
+  ],
+  [
+    'list-items: dotted projection (workflow entry)',
+    { source: 'list-items', filters: [], project: 'Workflow.name' },
+    '.[].Workflow.name'
+  ],
+  [
+    'list-items: filter on dotted field + project (authored)',
+    {
+      source: 'list-items',
+      filters: [{ field: 'verdict.action', op: 'is', value: 'allowed' }],
+      project: 'alert.signature'
+    },
+    '.[] | select(.verdict.action == "allowed").alert.signature'
+  ],
+  [
+    'list-items: no projection (the item itself)',
+    { source: 'list-items', filters: [], project: '' },
+    '.[]'
   ]
 ]
 
@@ -182,8 +217,14 @@ for (const [label, query, expected] of cases) {
 
 // paths that MUST fall back to raw (out of grammar scope)
 const mustFallback = [
-  '._secret',
-  '.[].verdict.action',
+  // A dotted / nested payload root field: `webhook-field` is single-level by
+  // design, so anything deeper than a bare `.<field>` stays raw.
+  '.data.value',
+  // Root-array map/group_by pipeline (webhook workflow list) — irreducible.
+  '. | map( select(.Workflow.name | contains("x")) ) | .[].Workflow.name',
+  // Union projecting a field INSIDE each arm before the flatten — distinct from
+  // the recognised `[…] | .[].value` (projection after the flatten); deferred.
+  '[.response[].Event.Object[].Attribute[].value, .response[].Event.Attribute[].value] | .[]',
   '.Event.Attribute | map(select(has("Tag"))) | length',
   // attr → tag: a select feeding a second-level projection into .Tag[] (a
   // sub-array projection — beyond the single-field CHECK; deferred).
@@ -223,6 +264,23 @@ const recogniseCases = [
   [
     '.Event.Tag | select(length > 0) | .[].name',
     { source: 'tags', filters: [], project: 'name' }
+  ],
+  // Non-MISP payload paths from the real library.
+  [
+    '._secret',
+    { source: 'webhook-field', eventField: '_secret', filters: [], project: '' }
+  ],
+  [
+    '.[].dest_ip',
+    { source: 'list-items', filters: [], project: 'dest_ip' }
+  ],
+  [
+    '.[].verdict.action',
+    { source: 'list-items', filters: [], project: 'verdict.action' }
+  ],
+  [
+    '.[].Workflow.enabled',
+    { source: 'list-items', filters: [], project: 'Workflow.enabled' }
   ]
 ]
 for (const [stored, expected] of recogniseCases) {
@@ -303,6 +361,27 @@ const sentenceCases = [
     'contains',
     ['scam'],
     'Pass when, looking at the event’s notes, its note contains “scam”.'
+  ],
+  [
+    'webhook: payload root field equals',
+    { source: 'webhook-field', eventField: '_secret', filters: [], project: '' },
+    'equals',
+    ['__secret_key__'],
+    'Pass when the payload’s _secret is “__secret_key__”.'
+  ],
+  [
+    'list-items: project dotted field',
+    { source: 'list-items', filters: [], project: 'verdict.action' },
+    'equals',
+    ['blocked'],
+    'Pass when, looking at each item in the list, its verdict.action is “blocked”.'
+  ],
+  [
+    'list-items: count of items',
+    { source: 'list-items', filters: [], project: '' },
+    'count',
+    ['>=1'],
+    'Pass when, looking at each item in the list, the number of items is “>=1”.'
   ]
 ]
 for (const [label, query, comparison, values, expected] of sentenceCases) {

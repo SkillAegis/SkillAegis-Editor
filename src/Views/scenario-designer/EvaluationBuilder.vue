@@ -335,6 +335,7 @@ function extractedFor(i) {
               :key="ci"
               :condition="condition"
               :strategy="strategy"
+              :target-tool="targetTool"
               :sample-data="sampleData"
               :verdict="verdictFor(ci)"
               :extracted="extractedFor(ci)"

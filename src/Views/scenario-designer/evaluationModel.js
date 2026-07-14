@@ -407,6 +407,7 @@ export const SOURCE_PRESETS = {
     stream: false,
     subject: 'the event',
     item: 'event',
+    owner: 'the event’s ',
   },
   // Response-wrapped variants (query_search / misp_query_search). Same
   // conceptual sources, with the `.response[]` wrapper chosen for the author.
@@ -465,24 +466,61 @@ export const SOURCE_PRESETS = {
     stream: false,
     subject: 'each response event',
     item: 'event',
+    owner: 'each response event’s ',
+  },
+  // Non-MISP payload sources (the tool-agnostic frontier). A webhook/HTTP payload
+  // is arbitrary JSON rooted at the payload itself; a Suricata IPS run and some
+  // search responses (e.g. the MISP workflow-list API) are a bare array. These
+  // let those scenarios author in the builder instead of hand-writing jq.
+  // `root: true` marks a scalar field of the payload root (base '' → `._secret`);
+  // `freeProject: true` marks an open-ended CHECK field typed by the author
+  // (payload items have no fixed vocabulary). Both are excluded from the MISP
+  // FROM options by `sourceOptionsForStrategy` (via `nonMisp`).
+  'webhook-field': {
+    label: 'A field on the payload',
+    base: '',
+    kind: 'event',
+    stream: false,
+    root: true,
+    nonMisp: true,
+    subject: 'the payload',
+    item: 'payload',
+    owner: 'the payload’s ',
+  },
+  'list-items': {
+    label: 'Each item in the list',
+    base: '.[]',
+    kind: 'item',
+    stream: true,
+    freeProject: true,
+    nonMisp: true,
+    subject: 'each item in the list',
+    item: 'item',
   },
 }
 
 // WHERE — filterable fields per source kind (dropdown; free text also allowed).
+// `item` (a bare list element — a Suricata alert, a workflow entry, …) has no
+// fixed schema, so its suggestions lean on the common Suricata alert fields and
+// any stored field stays selectable.
 export const FILTER_FIELDS_BY_KIND = {
   attr: ['value', 'type', 'category', 'to_ids', 'comment', 'object_relation'],
   obj: ['name', 'meta-category', 'distribution', 'comment'],
   tag: ['name'],
   note: ['note', 'language'],
+  item: ['dest_ip', 'src_ip', 'proto', 'verdict.action', 'alert.signature', 'alert.category'],
 }
 
 // CHECK — projectable fields per source kind. '*self*' = the item itself (no
 // projection suffix), paired with the `count` comparison ("how many match").
+// `item` uses a free-text CHECK input (`freeProject`), so its list is only the
+// default seed.
 export const PROJECTIONS_BY_KIND = {
   attr: ['value', 'to_ids', 'type', 'category', 'comment', '*self*'],
   obj: ['name', 'distribution', '*self*'],
   tag: ['name'],
   note: ['note', '*self*'],
+  item: ['*self*'],
 }
 
 // WHERE operators (how each renders inside select(...)).
@@ -694,7 +732,7 @@ function parseFilterTerm(input) {
     const values = []
     let field = null
     for (const part of orParts) {
-      const m = stripOuterParens(part).match(/^\.([A-Za-z_]\w*)\s*==\s*(.+)$/)
+      const m = stripOuterParens(part).match(/^\.([A-Za-z_][\w.]*)\s*==\s*(.+)$/)
       if (!m) {
         return null
       }
@@ -707,15 +745,15 @@ function parseFilterTerm(input) {
     }
     return { field, op: 'is-one-of', value: values.join(', ') }
   }
-  let m = term.match(/^\.([A-Za-z_]\w*)\s*\|\s*match\((.+)\)$/)
+  let m = term.match(/^\.([A-Za-z_][\w.]*)\s*\|\s*match\((.+)\)$/)
   if (m) {
     return { field: m[1], op: 'matches', value: jqUnliteral(m[2]) }
   }
-  m = term.match(/^\.([A-Za-z_]\w*)\s*\|\s*contains\((.+)\)$/)
+  m = term.match(/^\.([A-Za-z_][\w.]*)\s*\|\s*contains\((.+)\)$/)
   if (m) {
     return { field: m[1], op: 'contains', value: jqUnliteral(m[2]) }
   }
-  m = term.match(/^\.([A-Za-z_]\w*)\s*==\s*(.+)$/)
+  m = term.match(/^\.([A-Za-z_][\w.]*)\s*==\s*(.+)$/)
   if (m) {
     return { field: m[1], op: 'is', value: jqUnliteral(m[2]) }
   }
@@ -804,7 +842,8 @@ function peelSelect(rest) {
   if (scanned.after !== '') {
     // Accept both canonical "select(...).field" and the equivalent
     // "select(...) | .field" pipe form (normalised to the former, see §7.1).
-    const m = scanned.after.match(/^(?: \| )?\.([A-Za-z_]\w*)$/)
+    // A dotted field (`.verdict.action`) projects into a nested object.
+    const m = scanned.after.match(/^(?: \| )?\.([A-Za-z_][\w.]*)$/)
     if (!m) {
       return null
     }
@@ -818,7 +857,9 @@ function parseStreamRest(rest) {
   if (rest === '') {
     return { filters: [], project: '*self*' }
   }
-  const projOnly = rest.match(/^\.([A-Za-z_]\w*)$/)
+  // A projection field, possibly dotted (`.dest_ip`, `.verdict.action`) — the
+  // dotted form reaches into a nested object of a bare list item.
+  const projOnly = rest.match(/^\.([A-Za-z_][\w.]*)$/)
   if (projOnly) {
     return { filters: [], project: projOnly[1] }
   }
@@ -919,6 +960,17 @@ export function parseQueryFromPath(path) {
       query: { source: 'event-field', eventField: m[1], filters: [], project: '' },
     }
   }
+  // Non-MISP payload root field: a bare `.<field>` at the payload root (e.g.
+  // `._secret` on a webhook payload). Checked AFTER the MISP `.Event`/`.response`
+  // field forms above so it can never shadow them; single-level by design (a
+  // dotted or nested root path stays raw).
+  m = p.match(/^\.([A-Za-z_]\w*)$/)
+  if (m) {
+    return {
+      ok: true,
+      query: { source: 'webhook-field', eventField: m[1], filters: [], project: '' },
+    }
+  }
   // Two-level object→attribute drill (an object select feeding into .Attribute[]).
   // Tried before the single-level loop, which would otherwise reject it.
   const objAttr = parseObjAttrPath(p)
@@ -952,17 +1004,38 @@ export function emptyQuery() {
   return { source: 'event-field', eventField: 'info', filters: [], project: '' }
 }
 
-// Source options to offer in the FROM dropdown for a given strategy: the
-// response-wrapped strategies (query_search / misp_query_search) work on a
-// `.response[]`-wrapped payload, so they get the resp-* presets; everything
-// else gets the plain-event presets. The caller keeps the stored source
-// visible even if it falls outside this set.
-export function sourceOptionsForStrategy(strategy) {
+// Source options to offer in the FROM dropdown for a given strategy + target
+// tool. The data the conditions run on depends on both:
+//   • Suricata / simulate_ips → the array of alerts that fired (`list-items`).
+//   • webhook / data_filtering → the raw payload: a root object (`webhook-field`)
+//     or a bare list (`list-items`). (webhook's misp_query_search runs a MISP
+//     search, so it falls through to the wrapped-MISP branch below.)
+//   • MISP data_filtering → the MISP event (`.Event.*` presets).
+//   • Any wrapped MISP search (query_search / misp_query_search) → the response
+//     events (`.response[]` presets), plus `list-items` for a response that is a
+//     bare array (e.g. the MISP workflow-list API returns `[…]`, not
+//     `{response:[{Event:…}]}`).
+// The caller keeps the stored source visible even if it falls outside this set.
+export function sourceOptionsForStrategy(strategy, tool) {
+  const opt = (key) => ({ key, label: SOURCE_PRESETS[key].label })
   const wrapped = strategy === 'query_search' || strategy === 'misp_query_search'
+  if (tool === 'suricata') {
+    return ['list-items'].map(opt)
+  }
+  if (tool === 'webhook' && !wrapped) {
+    return ['webhook-field', 'list-items'].map(opt)
+  }
   const options = []
   for (const [key, preset] of Object.entries(SOURCE_PRESETS)) {
+    if (preset.nonMisp) {
+      // Only the bare-array list source, and only for a wrapped MISP search.
+      if (key === 'list-items' && wrapped) {
+        options.push(opt(key))
+      }
+      continue
+    }
     if (key.startsWith('resp-') === wrapped) {
-      options.push({ key, label: preset.label })
+      options.push(opt(key))
     }
   }
   return options
@@ -972,7 +1045,9 @@ export function sourceOptionsForStrategy(strategy) {
 export function defaultQueryForSource(source) {
   const preset = SOURCE_PRESETS[source]
   if (!preset || preset.kind === 'event') {
-    return { source: source || 'event-field', eventField: 'info', filters: [], project: '' }
+    // A payload root field starts blank (no MISP-style `.Event.info` default).
+    const eventField = preset && preset.root ? '' : 'info'
+    return { source: source || 'event-field', eventField, filters: [], project: '' }
   }
   const projections = PROJECTIONS_BY_KIND[preset.kind] || ['*self*']
   if (preset.twoLevel) {
@@ -985,7 +1060,9 @@ export function defaultQueryForSource(source) {
       project: projections[0],
     }
   }
-  return { source, eventField: 'info', filters: [], project: projections[0] }
+  // A free-text CHECK (bare list items) has no fixed field to default to.
+  const project = preset.freeProject ? '' : projections[0]
+  return { source, eventField: 'info', filters: [], project }
 }
 
 /* ==========================================================================
@@ -1077,10 +1154,11 @@ export function describeCondition(query, comparison, values) {
   if (!preset) {
     return null
   }
-  // Scalar event field — the field itself is the subject.
+  // Scalar field — the field itself is the subject. `owner` distinguishes the
+  // MISP event, a response event, and a raw payload.
   if (preset.kind === 'event') {
     const field = query.eventField || '(field)'
-    const owner = query.source === 'resp-field' ? 'each response event’s ' : 'the event’s '
+    const owner = preset.owner || 'the event’s '
     return 'Pass when ' + owner + field + ' ' + comparisonPhrase(comparison, values) + '.'
   }
   let subject

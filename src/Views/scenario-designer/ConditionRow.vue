@@ -41,6 +41,11 @@ const props = defineProps({
     type: String,
     default: 'data_filtering',
   },
+  // Target tool — scopes the FROM options too (webhook/suricata payloads).
+  targetTool: {
+    type: String,
+    default: 'MISP',
+  },
   // Parsed sample-data object the path preview runs against (null when the
   // sample is invalid/absent). Used only for the data_filtering path preview.
   sampleData: {
@@ -276,7 +281,12 @@ onBeforeUnmount(() => {
           </span>
         </div>
 
-        <QueryBuilder v-if="showBuilder" v-model:query="query" :strategy="strategy"></QueryBuilder>
+        <QueryBuilder
+          v-if="showBuilder"
+          v-model:query="query"
+          :strategy="strategy"
+          :tool="targetTool"
+        ></QueryBuilder>
 
         <input
           v-else
