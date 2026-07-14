@@ -133,6 +133,30 @@ const cases = [
     'two-level: no object filter degenerates to flat obj-attr base',
     { source: 'named-obj-attr', objectFilters: [], filters: [], project: 'value' },
     '.Event.Object[].Attribute[].value'
+  ],
+  [
+    'tags: has any tag (no filter) → null-safe guard form',
+    { source: 'tags', filters: [], project: 'name' },
+    '.Event.Tag | select(length > 0) | .[].name'
+  ],
+  [
+    'tags: name contains → field-select then project',
+    { source: 'tags', filters: [{ field: 'name', op: 'contains', value: 'tlp:white' }], project: 'name' },
+    '.Event.Tag[] | select(.name | contains("tlp:white")).name'
+  ],
+  [
+    'resp-tags: name contains',
+    {
+      source: 'resp-tags',
+      filters: [{ field: 'name', op: 'contains', value: 'misp-galaxy:mitre-attack-pattern' }],
+      project: 'name'
+    },
+    '.response[].Event.Tag[] | select(.name | contains("misp-galaxy:mitre-attack-pattern")).name'
+  ],
+  [
+    'notes: project .note',
+    { source: 'notes', filters: [], project: 'note' },
+    '.Event.Note[].note'
   ]
 ]
 
@@ -160,10 +184,13 @@ for (const [label, query, expected] of cases) {
 const mustFallback = [
   '._secret',
   '.[].verdict.action',
-  '.Event.Tag | select(length > 0) | .[].name',
   '.Event.Attribute | map(select(has("Tag"))) | length',
-  // attr → tag: a select feeding a second-level projection into .Tag[]
+  // attr → tag: a select feeding a second-level projection into .Tag[] (a
+  // sub-array projection — beyond the single-field CHECK; deferred).
   '.Event.Attribute[] | select(.value == "x") | .Tag[].name',
+  // attribute → its Sighting with a null guard (projection into a sub-object +
+  // self null-check — a distinct shape from the tag self-predicate; deferred).
+  '.response[].Event.Attribute[].Sighting | select(. != null)',
   // union embedding a scoped object select — more than the two-level drill
   '[(.Event.Object[] | select((.name == "email")).Attribute[]), .Event.Attribute[]] | .[].value',
   // three-level: object select → attribute select → tag projection
@@ -174,6 +201,38 @@ for (const p of mustFallback) {
     fail(`expected raw fallback but parsed: ${p}`)
   } else {
     console.log(`  \x1b[32m✓\x1b[0m fallback: ${p.length > 52 ? p.slice(0, 52) + '…' : p}`)
+  }
+}
+
+// Stored, non-canonical forms the library actually contains must be recognised
+// into the expected query (they normalise to the canonical form on re-serialise;
+// the semantic-equivalence of that normalisation is verified in Part B via jq).
+const recogniseCases = [
+  [
+    '.Event.Tag[].name | select((contains("tlp:white")))',
+    { source: 'tags', filters: [{ field: 'name', op: 'contains', value: 'tlp:white' }], project: 'name' }
+  ],
+  [
+    '.response[].Event.Tag[].name | select((contains("misp-galaxy:mitre-attack-pattern")))',
+    {
+      source: 'resp-tags',
+      filters: [{ field: 'name', op: 'contains', value: 'misp-galaxy:mitre-attack-pattern' }],
+      project: 'name'
+    }
+  ],
+  [
+    '.Event.Tag | select(length > 0) | .[].name',
+    { source: 'tags', filters: [], project: 'name' }
+  ]
+]
+for (const [stored, expected] of recogniseCases) {
+  const parsed = parseQueryFromPath(stored)
+  if (!parsed.ok || JSON.stringify(parsed.query) !== JSON.stringify(expected)) {
+    fail(
+      `recognise "${stored}"\n      expected: ${JSON.stringify(expected)}\n      got:      ${JSON.stringify(parsed.query)}`
+    )
+  } else {
+    console.log(`  \x1b[32m✓\x1b[0m recognise: ${stored.length > 46 ? stored.slice(0, 46) + '…' : stored}`)
   }
 }
 
@@ -223,6 +282,27 @@ const sentenceCases = [
     'equals',
     ['9.9.9.9'],
     'Pass when, looking at every attribute inside an object whose name is “domain-ip” where its type is “ip”, its value is “9.9.9.9”.'
+  ],
+  [
+    'tags: has any tag (count, no filter — no "matching")',
+    { source: 'tags', filters: [], project: 'name' },
+    'count',
+    ['>0'],
+    'Pass when, looking at the event’s tags, the number of tags is “>0”.'
+  ],
+  [
+    'tags: name contains (count, filtered — "matching")',
+    { source: 'tags', filters: [{ field: 'name', op: 'contains', value: 'tlp:white' }], project: 'name' },
+    'count',
+    ['>0'],
+    'Pass when, looking at the event’s tags where its name contains “tlp:white”, the number of matching tags is “>0”.'
+  ],
+  [
+    'notes: note contains',
+    { source: 'notes', filters: [], project: 'note' },
+    'contains',
+    ['scam'],
+    'Pass when, looking at the event’s notes, its note contains “scam”.'
   ]
 ]
 for (const [label, query, comparison, values, expected] of sentenceCases) {

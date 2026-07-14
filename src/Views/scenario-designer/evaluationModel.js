@@ -322,9 +322,15 @@ export function emptyCondition() {
  * Sources are the single-level shapes plus the two-level object→attribute
  * drill (`.Event.Object[] | select(.name=="url") | .Attribute[] | select(...)`):
  * pick the objects, then treat their `.Attribute[]` as an attribute stream.
+ * Tags and Notes are single-level streams too; tags additionally recognise the
+ * library's project-then-self-select idiom (`.Event.Tag[].name | select(contains
+ * (X))`, normalised to `.Event.Tag[] | select(.name | contains(X)).name`) and
+ * the null-safe "has any tag" guard (`.Event.Tag | select(length > 0) | .[].name`,
+ * emitted whenever a tag source carries no filter).
  * Still intentionally NOT recognised — these round-trip verbatim to the raw
- * field: multi-level projections (`.Tag[].name`), a select after a projection,
- * unions embedding a scoped select, and map/group_by pipelines.
+ * field: multi-level projections into a sub-array (`… | .Tag[].name`), a select
+ * after a projection that changes the field, unions embedding a scoped select,
+ * and map/group_by pipelines.
  * ======================================================================== */
 
 // FROM — the source collection. `base` is the jq prefix; `kind` drives the
@@ -386,6 +392,14 @@ export const SOURCE_PRESETS = {
     subject: 'the event’s tags',
     item: 'tag',
   },
+  notes: {
+    label: "The event's notes",
+    base: '.Event.Note[]',
+    kind: 'note',
+    stream: true,
+    subject: 'the event’s notes',
+    item: 'note',
+  },
   'event-field': {
     label: 'A single field on the event',
     base: '.Event',
@@ -428,6 +442,22 @@ export const SOURCE_PRESETS = {
     subject: 'the search response’s objects',
     item: 'object',
   },
+  'resp-tags': {
+    label: 'The response events’ tags',
+    base: '.response[].Event.Tag[]',
+    kind: 'tag',
+    stream: true,
+    subject: 'the search response’s tags',
+    item: 'tag',
+  },
+  'resp-notes': {
+    label: 'The response events’ notes',
+    base: '.response[].Event.Note[]',
+    kind: 'note',
+    stream: true,
+    subject: 'the search response’s notes',
+    item: 'note',
+  },
   'resp-field': {
     label: 'A field on each response event',
     base: '.response[].Event',
@@ -443,6 +473,7 @@ export const FILTER_FIELDS_BY_KIND = {
   attr: ['value', 'type', 'category', 'to_ids', 'comment', 'object_relation'],
   obj: ['name', 'meta-category', 'distribution', 'comment'],
   tag: ['name'],
+  note: ['note', 'language'],
 }
 
 // CHECK — projectable fields per source kind. '*self*' = the item itself (no
@@ -451,6 +482,7 @@ export const PROJECTIONS_BY_KIND = {
   attr: ['value', 'to_ids', 'type', 'category', 'comment', '*self*'],
   obj: ['name', 'distribution', '*self*'],
   tag: ['name'],
+  note: ['note', '*self*'],
 }
 
 // WHERE operators (how each renders inside select(...)).
@@ -607,6 +639,15 @@ function streamTail(base, rawFilters, project) {
   return projSuffix ? base + projSuffix : base
 }
 
+// The null-safe "has any tag" guard form for a tag stream base
+// (`.Event.Tag[]` → `.Event.Tag | select(length > 0) | .[].name`). Tags with no
+// WHERE filter serialise to this — it matches the library's convention and, on
+// an event with no `.Event.Tag` at all, yields an empty stream rather than the
+// error a bare `.Event.Tag[]` would raise.
+function tagGuardForm(streamBase) {
+  return streamBase.slice(0, -2) + ' | select(length > 0) | .[].name'
+}
+
 // Serialise a query object to its canonical jq path string. Returns null for
 // an unknown source.
 export function buildPathFromQuery(query) {
@@ -630,6 +671,16 @@ export function buildPathFromQuery(query) {
         ? preset.objBase + ' | ' + selectClause(objFilters) + ' | .Attribute[]'
         : preset.objBase + '.Attribute[]'
     return streamTail(base, query.filters, query.project)
+  }
+  if (preset.kind === 'tag') {
+    // A tag stream with no WHERE filter is the "has any tag" check — emit the
+    // null-safe guard form. A filtered tag stream keeps the plain stream base
+    // (`.Event.Tag[] | select(.name …).name`), matching the library's own
+    // convention that only the unfiltered case guards against a missing array.
+    const filters = (query.filters || []).filter(isMeaningfulFilter)
+    if (filters.length === 0) {
+      return tagGuardForm(preset.base)
+    }
   }
   return streamTail(preset.base, query.filters, query.project)
 }
@@ -667,6 +718,23 @@ function parseFilterTerm(input) {
   m = term.match(/^\.([A-Za-z_]\w*)\s*==\s*(.+)$/)
   if (m) {
     return { field: m[1], op: 'is', value: jqUnliteral(m[2]) }
+  }
+  return null
+}
+
+// Parse a select() body that predicates the streamed value ITSELF — a bare
+// `contains(X)` / `match(X)` with no field prefix (the `.` is the whole item).
+// The library uses it after projecting a scalar (tag name → select(contains…)).
+// Returns { op, value } or null.
+function parseSelfPredicate(body) {
+  const term = stripOuterParens(body)
+  let m = term.match(/^contains\((.+)\)$/)
+  if (m) {
+    return { op: 'contains', value: jqUnliteral(m[1]) }
+  }
+  m = term.match(/^match\((.+)\)$/)
+  if (m) {
+    return { op: 'matches', value: jqUnliteral(m[1]) }
   }
   return null
 }
@@ -753,6 +821,20 @@ function parseStreamRest(rest) {
   const projOnly = rest.match(/^\.([A-Za-z_]\w*)$/)
   if (projOnly) {
     return { filters: [], project: projOnly[1] }
+  }
+  // Project-then-self-select: ".name | select(contains(X))". Normalise to a WHERE
+  // on that field plus the projection, so it re-serialises via peelSelect as
+  // `select(.name | contains(X)).name` (semantically identical — jq-verified).
+  const projFirst = rest.match(/^\.([A-Za-z_]\w*) \| select\(/)
+  if (projFirst) {
+    const field = projFirst[1]
+    const scanned = scanBalanced(rest.slice(('.' + field + ' | ').length), 'select(')
+    if (scanned && scanned.after === '') {
+      const pred = parseSelfPredicate(scanned.body)
+      if (pred) {
+        return { filters: [{ field, op: pred.op, value: pred.value }], project: field }
+      }
+    }
   }
   const peeled = peelSelect(rest)
   if (!peeled) {
@@ -842,6 +924,14 @@ export function parseQueryFromPath(path) {
   const objAttr = parseObjAttrPath(p)
   if (objAttr) {
     return objAttr
+  }
+  // "Has any tag" guard form (`.Event.Tag | select(length > 0) | .[].name`) → an
+  // unfiltered tag source. Not caught by the stream loop (its base is
+  // `.Event.Tag[]`, which this doesn't start with), so recognise it explicitly.
+  for (const [key, preset] of STREAM_PRESETS_LONGEST_FIRST) {
+    if (preset.kind === 'tag' && p === tagGuardForm(preset.base)) {
+      return { ok: true, query: { source: key, filters: [], project: 'name' } }
+    }
   }
   for (const [key, preset] of STREAM_PRESETS_LONGEST_FIRST) {
     if (p === preset.base) {
@@ -1008,9 +1098,14 @@ export function describeCondition(query, comparison, values) {
   const where = describeFilters(query.filters)
   const projected = query.project && query.project !== '*self*'
   if (comparison === 'count') {
-    const what = projected
-      ? 'the ' + query.project + ' of the matching ' + (preset.item || 'item') + 's'
-      : 'the number of matching ' + (preset.item || 'item') + 's'
+    // Count reads as a quantity of items — the projection doesn't change the
+    // count, so it never appears here. "matching" only when something narrows
+    // the set (a WHERE, or a two-level object filter that qualifies the subject).
+    const noun = (preset.item || 'item') + 's'
+    const qualified =
+      where !== '' ||
+      (preset.twoLevel && (query.objectFilters || []).filter(isMeaningfulFilter).length > 0)
+    const what = 'the number of ' + (qualified ? 'matching ' + noun : noun)
     return 'Pass when, looking at ' + subject + where + ', ' + what + ' is ' + describeValues(values) + '.'
   }
   const check = projected
