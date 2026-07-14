@@ -500,27 +500,45 @@ export const SOURCE_PRESETS = {
 }
 
 // WHERE — filterable fields per source kind (dropdown; free text also allowed).
-// `item` (a bare list element — a Suricata alert, a workflow entry, …) has no
-// fixed schema, so its suggestions lean on the common Suricata alert fields and
-// any stored field stays selectable.
 export const FILTER_FIELDS_BY_KIND = {
   attr: ['value', 'type', 'category', 'to_ids', 'comment', 'object_relation'],
   obj: ['name', 'meta-category', 'distribution', 'comment'],
   tag: ['name'],
   note: ['note', 'language'],
-  item: ['dest_ip', 'src_ip', 'proto', 'verdict.action', 'alert.signature', 'alert.category'],
 }
 
 // CHECK — projectable fields per source kind. '*self*' = the item itself (no
 // projection suffix), paired with the `count` comparison ("how many match").
-// `item` uses a free-text CHECK input (`freeProject`), so its list is only the
-// default seed.
 export const PROJECTIONS_BY_KIND = {
   attr: ['value', 'to_ids', 'type', 'category', 'comment', '*self*'],
   obj: ['name', 'distribution', '*self*'],
   tag: ['name'],
   note: ['note', '*self*'],
-  item: ['*self*'],
+}
+
+// Field-name suggestions for the open-ended `list-items` source (a bare `.[]`
+// array). Unlike MISP kinds it has no fixed schema, so the vocabulary is keyed
+// by *target tool* (what the array actually contains), NOT by kind — and every
+// list is only a suggestion: the builder renders an editable combobox, so any
+// custom field name can still be typed. Used for both the WHERE field and the
+// CHECK projection (the same field paths serve as filter and projection).
+export const ITEM_FIELD_SUGGESTIONS_BY_TOOL = {
+  // Suricata IPS alerts (simulate_ips) — the fields of a fired alert.
+  suricata: [
+    'dest_ip',
+    'src_ip',
+    'dest_port',
+    'src_port',
+    'proto',
+    'verdict.action',
+    'alert.signature',
+    'alert.category',
+  ],
+  // A MISP search returning a bare array (e.g. the workflow-list API).
+  MISP: ['Workflow.name', 'Workflow.enabled'],
+  // A webhook payload is arbitrary JSON, so there is no authoritative schema —
+  // a few generic keys as a starting point; type the real field otherwise.
+  webhook: ['value', 'type', 'timestamp', 'action'],
 }
 
 // WHERE operators (how each renders inside select(...)).

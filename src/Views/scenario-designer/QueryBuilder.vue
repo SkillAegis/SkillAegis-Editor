@@ -1,3 +1,9 @@
+<script>
+// Module-scoped counter for unique <datalist> ids — one per builder instance,
+// so two builders with different tool-scoped suggestions don't collide.
+let queryBuilderUid = 0
+</script>
+
 <script setup>
 import { computed } from 'vue'
 import { faPlus, faXmark } from '@fortawesome/free-solid-svg-icons'
@@ -5,6 +11,7 @@ import {
   SOURCE_PRESETS,
   FILTER_FIELDS_BY_KIND,
   PROJECTIONS_BY_KIND,
+  ITEM_FIELD_SUGGESTIONS_BY_TOOL,
   QUERY_FILTER_OPS,
   buildPathFromQuery,
   defaultQueryForSource,
@@ -48,14 +55,21 @@ const isRoot = computed(() => !!preset.value?.root)
 // Two-level object→attribute source: an extra object-level filter picks which
 // objects to dive into before the WHERE/CHECK run on their attributes.
 const isTwoLevel = computed(() => !!preset.value?.twoLevel)
-// A bare list item has no fixed schema, so the CHECK field is typed free-hand
-// (`.dest_ip`, `.verdict.action`, `.Workflow.name`, …) rather than picked.
+// A bare list item has no fixed schema, so its WHERE field and CHECK projection
+// are editable comboboxes (type any field) rather than fixed dropdowns.
 const freeProject = computed(() => !!preset.value?.freeProject)
 
 const filterFields = computed(() => FILTER_FIELDS_BY_KIND[kind.value] || [])
 const projections = computed(() => PROJECTIONS_BY_KIND[kind.value] || [])
 // The object level always uses the object vocabulary (kind = 'obj').
 const objectFilterFields = FILTER_FIELDS_BY_KIND.obj || []
+
+// Suggestions for a `list-items` source's field/projection combobox, scoped by
+// target tool (Suricata alert fields vs. a webhook payload vs. a MISP bare-array
+// response). Only a hint — any custom field can be typed. Unique datalist id so
+// two builders on the page don't share a suggestion list.
+const itemFieldSuggestions = computed(() => ITEM_FIELD_SUGGESTIONS_BY_TOOL[props.tool] || [])
+const fieldDatalistId = `qb-item-fields-${queryBuilderUid++}`
 
 // FROM options for the strategy + tool, guaranteeing the stored source stays visible.
 const sourceOptions = computed(() => {
@@ -88,7 +102,10 @@ function onSourceChange(newSource) {
 }
 
 function addFilter() {
-  query.value.filters.push({ field: filterFields.value[0] || 'value', op: 'is', value: '' })
+  const field = freeProject.value
+    ? itemFieldSuggestions.value[0] || 'value'
+    : filterFields.value[0] || 'value'
+  query.value.filters.push({ field, op: 'is', value: '' })
 }
 
 function removeFilter(index) {
@@ -109,6 +126,11 @@ function removeObjectFilter(index) {
 
 <template>
   <div class="flex flex-col gap-2">
+    <!-- shared field-name suggestions for a list-items source (tool-scoped) -->
+    <datalist v-if="freeProject" :id="fieldDatalistId">
+      <option v-for="f in itemFieldSuggestions" :key="f" :value="f"></option>
+    </datalist>
+
     <!-- FROM -->
     <div class="rounded border border-slate-200 bg-white">
       <div class="flex items-center gap-2 px-2 py-1 border-b border-slate-100 bg-slate-50">
@@ -224,7 +246,18 @@ function removeObjectFilter(index) {
             AND
           </div>
           <div class="flex items-center gap-1.5">
+            <!-- editable combobox for open-ended list items; fixed dropdown otherwise -->
+            <input
+              v-if="freeProject"
+              type="text"
+              v-model="filter.field"
+              :list="fieldDatalistId"
+              class="shadow-sm border border-slate-300 rounded py-1 px-1 text-xs font-mono text-red-700 leading-tight focus:outline-none focus:border-slate-400 bg-white shrink-0 w-28"
+              placeholder="field"
+              spellcheck="false"
+            />
             <select
+              v-else
               v-model="filter.field"
               class="shadow-sm border border-slate-300 rounded py-1 px-1 text-xs font-mono text-red-700 leading-tight focus:outline-none focus:border-slate-400 bg-white shrink-0 w-28"
             >
@@ -280,14 +313,16 @@ function removeObjectFilter(index) {
         <span class="text-xs font-bold text-slate-600">Then check…</span>
       </div>
       <div class="p-2">
-        <!-- open-ended item field (Suricata alert / workflow entry): typed free-hand -->
+        <!-- open-ended item field (Suricata alert / webhook payload / workflow
+             entry): pick a suggestion or type any field; blank = the item itself -->
         <div v-if="freeProject" class="flex items-center gap-2">
           <span class="font-mono text-sm text-slate-400 shrink-0">.</span>
           <input
             type="text"
             v-model="query.project"
+            :list="fieldDatalistId"
             class="shadow-sm border border-slate-300 font-mono text-sm text-gray-700 w-full rounded py-1 px-2 leading-tight focus:outline-none focus:border-slate-400 bg-white"
-            placeholder="dest_ip, verdict.action, … (blank = the item itself)"
+            placeholder="field (blank = the item itself)"
             spellcheck="false"
           />
         </div>
