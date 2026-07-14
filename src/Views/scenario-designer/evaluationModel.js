@@ -1084,6 +1084,128 @@ export function defaultQueryForSource(source) {
 }
 
 /* ==========================================================================
+ * Point-at-data field suggestions (P4).
+ * Derive the field names that actually exist in a sample event, so the builder
+ * can suggest them wherever a field name is authored: the FROM event/payload
+ * field, the WHERE filter, the CHECK projection, and the object-level filter.
+ * Pure and fail-soft — any malformed sample or path yields empty lists, because
+ * these are only hints and must never break the builder.
+ * ======================================================================== */
+
+// Evaluate a *restricted* jq path against a plain JS value, returning the flat
+// stream of values it yields. Handles exactly the grammar the source presets
+// use: an optional `[a, b] | .[]` union wrapper, and dotted chains of `.Key`,
+// `.Key[]` and `.[]`. Anything absent or mistyped is skipped, never thrown — it
+// is a best-effort structural walk, not a jq engine.
+function walkJqPath(path, root) {
+  const p = (path || '').trim()
+  if (p === '' || p === '.') {
+    return [root]
+  }
+  // Union `[ <expr>, <expr>, … ] | .[]` — the trailing `| .[]` merely flattens
+  // the already-flat concatenation of each branch's stream. Match the opening
+  // bracket to its own close (the branches carry their own `[]` iterators, so
+  // `lastIndexOf` would wrongly grab the `]` of the trailing `.[]`).
+  if (p[0] === '[') {
+    let depth = 0
+    let close = -1
+    for (let i = 0; i < p.length; i += 1) {
+      if (p[i] === '[') {
+        depth += 1
+      } else if (p[i] === ']') {
+        depth -= 1
+        if (depth === 0) {
+          close = i
+          break
+        }
+      }
+    }
+    if (close <= 0) {
+      return []
+    }
+    return splitTopLevel(p.slice(1, close), ',').flatMap((branch) => walkJqPath(branch, root))
+  }
+  // Dotted chain: drop the leading '.', then apply each segment to the stream.
+  const segments = splitTopLevel(p.replace(/^\./, ''), '.')
+  let stream = [root]
+  for (const seg of segments) {
+    const iterate = seg.endsWith('[]')
+    const key = iterate ? seg.slice(0, -2) : seg
+    const next = []
+    for (const value of stream) {
+      // An empty key (`[]`) iterates the current value itself; otherwise index
+      // into it (only plain objects can be indexed).
+      const target =
+        key === '' ? value : value != null && typeof value === 'object' ? value[key] : undefined
+      if (iterate) {
+        if (Array.isArray(target)) {
+          next.push(...target)
+        }
+      } else if (target !== undefined) {
+        next.push(target)
+      }
+    }
+    stream = next
+  }
+  return stream
+}
+
+// Union of own keys across a set of values — only plain objects contribute a
+// vocabulary (arrays / scalars / null have no field names). Sorted and deduped.
+function unionKeys(values) {
+  const keys = new Set()
+  for (const value of values) {
+    if (value != null && typeof value === 'object' && !Array.isArray(value)) {
+      for (const key of Object.keys(value)) {
+        keys.add(key)
+      }
+    }
+  }
+  return [...keys].sort()
+}
+
+// Field-name suggestions for `query.source`, read from a live sample. Returns
+// three lists so the builder can seed each control from the right level:
+//   • eventFields  — keys of the event/payload object (the FROM `field` input)
+//   • itemFields   — keys of the WHERE/CHECK items (attributes, tags, …)
+//   • objectFields — keys of the objects a two-level source dives through
+// The sample must be an object (the shape `/injects/jq-path-test` also expects),
+// so bare-array `list-items` samples contribute nothing here — those sources
+// keep their tool-scoped static suggestions.
+export function fieldSuggestionsFromSample(query, sample) {
+  const empty = { eventFields: [], itemFields: [], objectFields: [] }
+  if (!query || sample == null || typeof sample !== 'object') {
+    return empty
+  }
+  const preset = SOURCE_PRESETS[query.source]
+  if (!preset) {
+    return empty
+  }
+  try {
+    // Payload root field (webhook): the vocabulary is the payload's own keys.
+    if (preset.root) {
+      return { ...empty, eventFields: unionKeys([sample]) }
+    }
+    // A single field on an event/payload object (`.Event`, `.response[].Event`).
+    if (preset.kind === 'event') {
+      return { ...empty, eventFields: unionKeys(walkJqPath(preset.base, sample)) }
+    }
+    // Two-level object→attribute: the objects feed the object-level filter, and
+    // the attributes of those objects feed the WHERE/CHECK.
+    if (preset.twoLevel) {
+      const objects = walkJqPath(preset.objBase, sample)
+      const attributes = objects.flatMap((obj) => walkJqPath('.Attribute[]', obj))
+      return { eventFields: [], objectFields: unionKeys(objects), itemFields: unionKeys(attributes) }
+    }
+    // Single-level stream (attr / obj / tag / note / item): the yielded items'
+    // keys feed both the WHERE filter and the CHECK projection.
+    return { ...empty, itemFields: unionKeys(walkJqPath(preset.base, sample)) }
+  } catch {
+    return empty
+  }
+}
+
+/* ==========================================================================
  * Plain-language sentence — restate a condition in English (P2).
  * Pure + display-only: turns a recognised query + its comparison/values into a
  * one-line paraphrase so a non-jq author can sanity-check the rule. Returns null

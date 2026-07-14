@@ -28,7 +28,8 @@ const here = dirname(fileURLToPath(import.meta.url))
 const modelPath = resolve(here, '../src/Views/scenario-designer/evaluationModel.js')
 const modelSrc = readFileSync(modelPath, 'utf8')
 const model = await import('data:text/javascript;charset=utf-8,' + encodeURIComponent(modelSrc))
-const { buildPathFromQuery, parseQueryFromPath, describeCondition } = model
+const { buildPathFromQuery, parseQueryFromPath, describeCondition, fieldSuggestionsFromSample } =
+  model
 
 let failures = 0
 const fail = (msg) => {
@@ -395,6 +396,72 @@ for (const [label, query, comparison, values, expected] of sentenceCases) {
 // An unrecognised query yields no sentence (caller shows nothing).
 if (describeCondition({ source: 'nope' }, 'contains', ['x']) !== null) {
   fail('sentence for unknown source should be null')
+}
+
+/* ------------------------------------------------------------------ *
+ * Part A3 — point-at-data field suggestions (fieldSuggestionsFromSample)
+ * The builder reads real field names from a sample so it can suggest them.
+ * A compact sample with predictable keys lets us assert the exact vocabulary
+ * derived at each level (event / item / object) per source kind.
+ * ------------------------------------------------------------------ */
+console.log('\nPart A3 — point-at-data field suggestions')
+
+const SAMPLE = {
+  Event: {
+    info: 'x',
+    uuid: 'u1',
+    Attribute: [
+      { type: 'ip-dst', value: '1.2.3.4', to_ids: true },
+      { type: 'text', value: 'y', comment: 'c', object_relation: 'rel' }
+    ],
+    Object: [
+      {
+        name: 'file',
+        'meta-category': 'file',
+        Attribute: [{ type: 'sha1', value: 'abc', to_ids: false }]
+      },
+      { name: 'person', Attribute: [{ type: 'phone', value: '123', object_relation: 'from' }] }
+    ],
+    Tag: [{ name: 'tlp:red', colour: '#ff0000' }],
+    Note: [{ note: 'hello', language: 'en' }]
+  }
+}
+const RESP = { response: [SAMPLE] }
+const WEBHOOK = { _secret: 's', action: 'create', id: 7 }
+
+const sug = (source, sample) => fieldSuggestionsFromSample({ source }, sample)
+const noFields = { eventFields: [], itemFields: [], objectFields: [] }
+const attrVocab = ['comment', 'object_relation', 'to_ids', 'type', 'value']
+const eventVocab = ['Attribute', 'Note', 'Object', 'Tag', 'info', 'uuid']
+
+const suggestionCases = [
+  // stream sources — item-level keys feed WHERE + CHECK
+  ['all-attr (union of object + top attrs)', sug('all-attr', SAMPLE), { ...noFields, itemFields: attrVocab }],
+  ['top-attr', sug('top-attr', SAMPLE), { ...noFields, itemFields: attrVocab }],
+  ['objects', sug('objects', SAMPLE), { ...noFields, itemFields: ['Attribute', 'meta-category', 'name'] }],
+  ['tags', sug('tags', SAMPLE), { ...noFields, itemFields: ['colour', 'name'] }],
+  ['notes', sug('notes', SAMPLE), { ...noFields, itemFields: ['language', 'note'] }],
+  // event / payload field sources — event-level keys feed the FROM `field` input
+  ['event-field', sug('event-field', SAMPLE), { ...noFields, eventFields: eventVocab }],
+  ['webhook-field (payload root keys)', sug('webhook-field', WEBHOOK), { ...noFields, eventFields: ['_secret', 'action', 'id'] }],
+  // two-level — objects feed the object filter, their attributes feed WHERE/CHECK
+  ['named-obj-attr', sug('named-obj-attr', SAMPLE), { eventFields: [], objectFields: ['Attribute', 'meta-category', 'name'], itemFields: ['object_relation', 'to_ids', 'type', 'value'] }],
+  // response-wrapped variants walk through `.response[]`
+  ['resp-attr', sug('resp-attr', RESP), { ...noFields, itemFields: attrVocab }],
+  ['resp-field', sug('resp-field', RESP), { ...noFields, eventFields: eventVocab }],
+  // fail-soft: bad/absent inputs and array-shaped samples yield nothing
+  ['null query', fieldSuggestionsFromSample(null, SAMPLE), noFields],
+  ['null sample', sug('all-attr', null), noFields],
+  ['unknown source', sug('nope', SAMPLE), noFields],
+  ['empty object sample', sug('all-attr', {}), noFields],
+  ['list-items needs an array sample (object → nothing)', sug('list-items', SAMPLE), noFields]
+]
+for (const [label, got, want] of suggestionCases) {
+  if (!eq(got, want)) {
+    fail(`suggest "${label}"\n      expected: ${JSON.stringify(want)}\n      got:      ${JSON.stringify(got)}`)
+  } else {
+    console.log(`  \x1b[32m✓\x1b[0m suggest: ${label}`)
+  }
 }
 
 /* ------------------------------------------------------------------ *

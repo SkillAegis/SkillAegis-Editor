@@ -16,6 +16,7 @@ import {
   buildPathFromQuery,
   defaultQueryForSource,
   sourceOptionsForStrategy,
+  fieldSuggestionsFromSample,
 } from '@/Views/scenario-designer/evaluationModel.js'
 
 // The query object { source, eventField?, filters, project }. Two-way bound;
@@ -36,6 +37,12 @@ const props = defineProps({
   tool: {
     type: String,
     default: 'MISP',
+  },
+  // Parsed sample event (or null). Its real field names are surfaced as
+  // point-at-data suggestions wherever the author names a field.
+  sampleData: {
+    type: Object,
+    default: null,
   },
 })
 
@@ -64,12 +71,34 @@ const projections = computed(() => PROJECTIONS_BY_KIND[kind.value] || [])
 // The object level always uses the object vocabulary (kind = 'obj').
 const objectFilterFields = FILTER_FIELDS_BY_KIND.obj || []
 
-// Suggestions for a `list-items` source's field/projection combobox, scoped by
-// target tool (Suricata alert fields vs. a webhook payload vs. a MISP bare-array
-// response). Only a hint — any custom field can be typed. Unique datalist id so
-// two builders on the page don't share a suggestion list.
-const itemFieldSuggestions = computed(() => ITEM_FIELD_SUGGESTIONS_BY_TOOL[props.tool] || [])
-const fieldDatalistId = `qb-item-fields-${queryBuilderUid++}`
+// Point-at-data (P4): field names actually present in the loaded sample, so the
+// builder can suggest them wherever a field is named. Pure hints — every control
+// still accepts a value the sample doesn't contain.
+const sampleSuggestions = computed(() => fieldSuggestionsFromSample(query.value, props.sampleData))
+// Sample fields the curated dropdowns don't already list, surfaced under an "in
+// your sample" optgroup so the curated names stay primary.
+const filterFieldExtras = computed(() =>
+  sampleSuggestions.value.itemFields.filter((f) => !filterFields.value.includes(f))
+)
+const projectionExtras = computed(() =>
+  sampleSuggestions.value.itemFields.filter((f) => !projections.value.includes(f))
+)
+const objectFilterExtras = computed(() =>
+  sampleSuggestions.value.objectFields.filter((f) => !objectFilterFields.includes(f))
+)
+
+// Suggestions for a `list-items` source's field/projection combobox: the sample's
+// own item keys first (real data), then static hints scoped by target tool
+// (Suricata alert fields vs. a webhook payload vs. a MISP bare-array response).
+// Only a hint — any custom field can be typed. Unique datalist ids so two
+// builders on the page don't share a suggestion list.
+const itemFieldSuggestions = computed(() => {
+  const staticHints = ITEM_FIELD_SUGGESTIONS_BY_TOOL[props.tool] || []
+  return [...new Set([...sampleSuggestions.value.itemFields, ...staticHints])]
+})
+const uid = queryBuilderUid++
+const fieldDatalistId = `qb-item-fields-${uid}`
+const eventFieldDatalistId = `qb-event-fields-${uid}`
 
 // FROM options for the strategy + tool, guaranteeing the stored source stays visible.
 const sourceOptions = computed(() => {
@@ -130,6 +159,10 @@ function removeObjectFilter(index) {
     <datalist v-if="freeProject" :id="fieldDatalistId">
       <option v-for="f in itemFieldSuggestions" :key="f" :value="f"></option>
     </datalist>
+    <!-- sample-derived field names for the event/payload FROM field (P4) -->
+    <datalist v-if="isEvent && sampleSuggestions.eventFields.length" :id="eventFieldDatalistId">
+      <option v-for="f in sampleSuggestions.eventFields" :key="f" :value="f"></option>
+    </datalist>
 
     <!-- FROM -->
     <div class="rounded border border-slate-200 bg-white">
@@ -155,6 +188,7 @@ function removeObjectFilter(index) {
           <input
             type="text"
             v-model="query.eventField"
+            :list="eventFieldDatalistId"
             class="shadow-sm border border-slate-300 font-mono text-sm text-red-700 w-full rounded py-1 px-2 leading-tight focus:outline-none focus:border-slate-400 bg-white"
             :placeholder="isRoot ? '_secret' : isResponse ? 'event_creator_email' : 'info'"
             spellcheck="false"
@@ -183,7 +217,13 @@ function removeObjectFilter(index) {
                 class="shadow-sm border border-slate-300 rounded py-1 px-1 text-xs font-mono text-red-700 leading-tight focus:outline-none focus:border-slate-400 bg-white shrink-0 w-28"
               >
                 <option v-for="f in objectFilterFields" :key="f" :value="f">.{{ f }}</option>
-                <option v-if="!objectFilterFields.includes(objFilter.field)" :value="objFilter.field">
+                <optgroup v-if="objectFilterExtras.length" label="in your sample">
+                  <option v-for="f in objectFilterExtras" :key="f" :value="f">.{{ f }}</option>
+                </optgroup>
+                <option
+                  v-if="!objectFilterFields.includes(objFilter.field) && !objectFilterExtras.includes(objFilter.field)"
+                  :value="objFilter.field"
+                >
                   .{{ objFilter.field }}
                 </option>
               </select>
@@ -262,7 +302,13 @@ function removeObjectFilter(index) {
               class="shadow-sm border border-slate-300 rounded py-1 px-1 text-xs font-mono text-red-700 leading-tight focus:outline-none focus:border-slate-400 bg-white shrink-0 w-28"
             >
               <option v-for="f in filterFields" :key="f" :value="f">.{{ f }}</option>
-              <option v-if="!filterFields.includes(filter.field)" :value="filter.field">
+              <optgroup v-if="filterFieldExtras.length" label="in your sample">
+                <option v-for="f in filterFieldExtras" :key="f" :value="f">.{{ f }}</option>
+              </optgroup>
+              <option
+                v-if="!filterFields.includes(filter.field) && !filterFieldExtras.includes(filter.field)"
+                :value="filter.field"
+              >
                 .{{ filter.field }}
               </option>
             </select>
@@ -332,7 +378,13 @@ function removeObjectFilter(index) {
           class="shadow-sm border border-slate-300 w-full rounded py-1 px-2 text-sm font-mono text-gray-700 leading-tight focus:outline-none focus:border-slate-400 bg-white"
         >
           <option v-for="p in projections" :key="p" :value="p">{{ projectionLabel(p) }}</option>
-          <option v-if="!projections.includes(query.project)" :value="query.project">
+          <optgroup v-if="projectionExtras.length" label="in your sample">
+            <option v-for="p in projectionExtras" :key="p" :value="p">{{ projectionLabel(p) }}</option>
+          </optgroup>
+          <option
+            v-if="!projections.includes(query.project) && !projectionExtras.includes(query.project)"
+            :value="query.project"
+          >
             {{ projectionLabel(query.project) }}
           </option>
         </select>

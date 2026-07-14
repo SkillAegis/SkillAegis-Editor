@@ -286,6 +286,7 @@ onBeforeUnmount(() => {
           v-model:query="query"
           :strategy="strategy"
           :tool="targetTool"
+          :sample-data="sampleData"
         ></QueryBuilder>
 
         <input
