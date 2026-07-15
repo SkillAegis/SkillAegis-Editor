@@ -411,8 +411,9 @@ function extractedFor(i) {
         </details>
       </div>
 
-      <!-- live test column -->
-      <div class="w-full lg:basis-2/5 lg:min-w-0 lg:max-w-[460px] lg:sticky lg:top-2">
+      <!-- live test column: sticks below the step tracker (~75px tall) so its
+           header stays fully visible instead of sliding under the sticky bar -->
+      <div class="w-full lg:basis-2/5 lg:min-w-0 lg:max-w-[460px] lg:sticky lg:top-[88px]">
         <LiveTestPanel
           v-model:test-data="sampleDataText"
           :evaluation="evaluation"
