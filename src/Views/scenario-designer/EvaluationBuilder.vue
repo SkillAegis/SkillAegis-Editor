@@ -229,7 +229,7 @@ function extractedFor(i) {
 
     <div class="flex flex-col lg:flex-row gap-4 items-start">
       <!-- builder column -->
-      <div class="w-full lg:basis-3/5 flex flex-col gap-3">
+      <div class="w-full lg:grow lg:basis-3/5 lg:min-w-0 flex flex-col gap-3">
         <!-- strategy / result / score -->
         <div class="flex flex-wrap gap-3">
           <div class="grow min-w-[12rem]">
@@ -412,7 +412,7 @@ function extractedFor(i) {
       </div>
 
       <!-- live test column -->
-      <div class="w-full lg:basis-2/5 lg:sticky lg:top-2">
+      <div class="w-full lg:basis-2/5 lg:min-w-0 lg:max-w-[460px] lg:sticky lg:top-2">
         <LiveTestPanel
           v-model:test-data="sampleDataText"
           :evaluation="evaluation"

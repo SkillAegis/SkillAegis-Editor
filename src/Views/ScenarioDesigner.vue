@@ -95,11 +95,26 @@ function beforeUnloadHandler(event) {
 
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnloadHandler)
+  stickyObserver?.disconnect()
+  uninstallScrollGuard()
   resetState()
 })
 
 onMounted(() => {
   window.addEventListener('beforeunload', beforeUnloadHandler)
+  // Raise a shadow under the step tracker once it sticks to the top: watch a
+  // 1px sentinel placed just above it — when the sentinel scrolls out of view,
+  // the tracker has stuck.
+  // threshold 0: the sentinel counts as "visible" while any part is in view, so
+  // the shadow flips on only once it has fully scrolled past the top (stuck) —
+  // a 1px sentinel at threshold 1 reads as off-screen due to subpixel rounding.
+  stickyObserver = new IntersectionObserver(
+    ([entry]) => {
+      stickyStuck.value = !entry.isIntersecting
+    },
+    { threshold: 0 }
+  )
+  installScrollGuard()
   resetState()
   maybeSelectFromQuery()
 })
@@ -312,6 +327,65 @@ const selectedInjectFlow = ref(null)
 const selectedInjectFlowUUID = ref(null)
 const step = ref(0)
 let newUnsavedInjects = []
+
+/* ---- sticky step-tracker shadow ---- */
+const stickyStuck = ref(false)
+const stickySentinel = ref(null)
+let stickyObserver = null
+
+// The sentinel is conditionally rendered (only when an inject is selected), so
+// (re)attach the observer whenever the element appears or goes away.
+watch(stickySentinel, (el) => {
+  if (!stickyObserver) {
+    return
+  }
+  stickyObserver.disconnect()
+  stickyStuck.value = false
+  if (el) {
+    stickyObserver.observe(el)
+  }
+})
+
+/* ---- suppress the editors' mount-time auto-scroll ---- */
+// The Completion step's editors (vanilla-jsoneditor / CodeMirror) call
+// window.scrollBy via their own scrollIntoView as they mount and measure —
+// sometimes several hundred ms later — which yanks the page down when opening
+// or switching an inject. We can't configure that off, so while a step/inject
+// is settling we make *programmatic* window scrolls no-ops. Native user
+// scrolling (wheel/touch/keyboard/scrollbar) goes through the browser's input
+// path, not these methods, so the user is never blocked — and because the
+// scroll is prevented rather than undone, there is no flicker. Patched on mount,
+// restored on unmount; `nativeScrollTo` is our own un-guarded escape hatch.
+let autoScrollSuppressedUntil = 0
+const origScrollTo = window.scrollTo
+const origScroll = window.scroll
+const origScrollBy = window.scrollBy
+const nativeScrollTo = origScrollTo.bind(window)
+
+function suppressEditorAutoScroll() {
+  autoScrollSuppressedUntil = performance.now() + 1500
+}
+function installScrollGuard() {
+  const guard = (orig) =>
+    function (...args) {
+      if (performance.now() < autoScrollSuppressedUntil) {
+        return
+      }
+      return orig.apply(window, args)
+    }
+  window.scrollTo = guard(origScrollTo)
+  window.scroll = guard(origScroll)
+  window.scrollBy = guard(origScrollBy)
+}
+function uninstallScrollGuard() {
+  window.scrollTo = origScrollTo
+  window.scroll = origScroll
+  window.scrollBy = origScrollBy
+}
+
+// Every step change shows the new step from its top, with the editors' auto
+// scroll suppressed (fixes the Completion step opening scrolled-down).
+watch(step, () => scrollToTop())
 
 const emptyInject = {
   uuid: '',
@@ -545,6 +619,16 @@ function doSelectInject(uuid) {
   selectedInject.value = injectByUUID.value[uuid]
   selectedInjectFlow.value = injectFlowByUUID.value[uuid]
   selectedInjectFlowUUID.value = uuid
+  // Switching injects keeps the current step but should show it from the top,
+  // not the previous inject's scroll offset.
+  scrollToTop()
+}
+
+// Jump to the top and suppress the editors' mount-time auto-scroll (see
+// suppressEditorAutoScroll). Called on inject select and on every step change.
+function scrollToTop() {
+  nativeScrollTo({ top: 0, left: 0, behavior: 'instant' })
+  suppressEditorAutoScroll()
 }
 
 function resetState() {
@@ -789,8 +873,13 @@ function triggerSummary(injectFlow) {
       ></Alert>
 
       <div v-else class="flex flex-col min-h-[600px]">
+        <!-- sentinel: when it scrolls out of view, the tracker below has stuck -->
+        <div ref="stickySentinel" aria-hidden="true" class="h-px -mb-px"></div>
         <!-- sticky step tracker -->
-        <div class="sticky top-0 z-10 bg-slate-50 pt-1 pb-3 -mx-1 px-1">
+        <div
+          class="sticky top-0 z-10 bg-slate-50 pt-1 pb-3 -mx-1 px-1 transition-shadow duration-200"
+          :class="stickyStuck ? 'shadow-[0_6px_16px_-6px_rgba(15,23,42,0.22)]' : ''"
+        >
           <StepTracker :steps="steps" :current="step" @go="goStep"></StepTracker>
         </div>
 
