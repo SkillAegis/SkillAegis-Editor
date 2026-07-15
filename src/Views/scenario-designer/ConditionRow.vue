@@ -9,6 +9,9 @@ import {
   faCircleCheck,
   faCircleXmark,
   faSpinner,
+  faLayerGroup,
+  faCircleQuestion,
+  faTriangleExclamation,
 } from '@fortawesome/free-solid-svg-icons'
 import { testJqPath as testJqPathAPI } from '@/api'
 import {
@@ -74,6 +77,24 @@ function removeValue(index) {
 function onExtractAllToggle(event) {
   condition.value.extract_type = event.target.checked ? 'all' : ''
 }
+
+const isCount = computed(() => condition.value.comparison === 'count')
+
+// A `count` comparison must look at *every* match: the engine counts the length
+// of the extraction, so with the default `first` it counts one item's fields
+// (or errors on no match) instead of the matches — see PRD §6.1. When the author
+// picks `count` we set extract_type='all' for them; raw mode keeps the manual
+// control. Fires on the user's choice (not on load), so opening an untouched
+// scenario never rewrites it — a legacy `count` stored with `first` is instead
+// surfaced as a fixable warning in the footer.
+watch(
+  () => condition.value.comparison,
+  (comparison) => {
+    if (comparison === 'count' && condition.value.extract_type !== 'all') {
+      condition.value.extract_type = 'all'
+    }
+  }
+)
 
 /* ---- query builder <-> path sync ---- */
 // The condition's jq `path` is authored visually whenever it fits the
@@ -381,11 +402,49 @@ onBeforeUnmount(() => {
         <span class="italic">{{ sentence }}</span>
       </p>
 
-      <!-- footer: extracted preview + extract type -->
+      <!-- footer: match scope (extract_type) + extracted preview -->
       <div class="flex items-center gap-2 flex-wrap text-xs text-slate-500">
+        <!-- builder mode: count is automatic (needs every match); other comparisons get a clear, documented opt-in -->
+        <template v-if="showBuilder">
+          <template v-if="isCount">
+            <span
+              v-if="condition.extract_type === 'all'"
+              class="inline-flex items-center gap-1 text-slate-400"
+              title="A count only makes sense across every match, so this check automatically looks at all of them (jq extract_type: all)."
+            >
+              <FontAwesomeIcon :icon="faLayerGroup" class="fa-fw"></FontAwesomeIcon>
+              counts every match
+            </span>
+            <button
+              v-else
+              type="button"
+              class="inline-flex items-center gap-1 font-semibold text-amber-600 hover:text-amber-800 select-none"
+              title="This counts only the first match right now — so it counts that one item's fields, not the number of matches (and errors when nothing matches). Click to count every match (jq extract_type: all)."
+              @click="condition.extract_type = 'all'"
+            >
+              <FontAwesomeIcon :icon="faTriangleExclamation" class="fa-fw"></FontAwesomeIcon>
+              only counting the first match — fix
+            </button>
+          </template>
+          <label
+            v-else
+            class="inline-flex items-center gap-1 cursor-pointer select-none"
+            title="By default the check looks at only the first value the path finds. Turn this on when the path can return several values and the rule should hold across the whole set (jq extract_type: all instead of first)."
+          >
+            <input
+              type="checkbox"
+              :checked="condition.extract_type === 'all'"
+              @change="onExtractAllToggle"
+            />
+            check every match, not just the first
+            <FontAwesomeIcon :icon="faCircleQuestion" class="fa-fw text-slate-400"></FontAwesomeIcon>
+          </label>
+        </template>
+        <!-- raw mode: keep the explicit control for jq authors -->
         <label
+          v-else
           class="inline-flex items-center gap-1 cursor-pointer select-none"
-          title="Extract all matches instead of just the first one (jq extract_type)"
+          title="jq extract_type — unticked = first (only the first value the path finds); ticked = all (collect every value into a list)."
         >
           <input
             type="checkbox"
@@ -393,6 +452,7 @@ onBeforeUnmount(() => {
             @change="onExtractAllToggle"
           />
           match all results
+          <span class="font-mono text-2xs text-slate-400">(extract_type)</span>
         </label>
         <span v-if="extracted !== null && !isDataFiltering" class="ml-auto inline-flex items-center gap-1">
           extracted:

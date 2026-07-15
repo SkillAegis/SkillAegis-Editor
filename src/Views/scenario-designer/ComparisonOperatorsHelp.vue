@@ -3,7 +3,7 @@
 // docs/comparison-operators.md. Content is derived from the shared evaluation
 // engine (SkillAegis-Dashboard/backend/utils.py) — the behaviour described here
 // is what actually runs, not just the short per-operator hints.
-import { faDatabase, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons'
+import { faDatabase, faTriangleExclamation, faLayerGroup } from '@fortawesome/free-solid-svg-icons'
 
 defineProps({
   show: { type: Boolean, default: false },
@@ -41,6 +41,28 @@ const OBJECT_OPS = [
           a string, a list, or an object. The same operator name can behave differently per type.
           All conditions in an evaluation must hold (<strong>AND</strong>).
         </p>
+
+        <!-- matching scope (extract_type) -->
+        <div class="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 mb-3 text-xs text-slate-700">
+          <p class="font-semibold text-blue-800 mb-1">
+            <FontAwesomeIcon :icon="faLayerGroup" class="mr-1"></FontAwesomeIcon>Matching scope — first vs. all
+            (<code class="font-mono">extract_type</code>)
+          </p>
+          <p class="mb-1">
+            A path can match many values. Before the operator runs, that result is reduced to either
+            the <strong>first</strong> match (a single string or object) or <strong>all</strong> of them
+            (a list) — which is exactly what decides <em>which table below applies</em>.
+          </p>
+          <ul class="list-disc ml-4 flex flex-col gap-1">
+            <li><code class="font-mono">first</code> (default) — the first value the path finds. Right for a single-value check like <code>.Event.info</code>.</li>
+            <li><code class="font-mono">all</code> — every match, as a list. Needed whenever the check should consider the whole set.</li>
+            <li>
+              <strong><code class="font-mono">count</code> always uses <code class="font-mono">all</code></strong> — with
+              <code class="font-mono">first</code> it would count one item's fields (the "object" row below), not the number of matches.
+              The builder sets this for you; the <em>“check every match”</em> toggle controls it for the other operators.
+            </li>
+          </ul>
+        </div>
 
         <!-- String -->
         <h4 class="flex items-center gap-1.5 font-bold text-slate-800 mt-4 mb-1">
