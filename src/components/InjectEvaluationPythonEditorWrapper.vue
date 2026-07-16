@@ -6,9 +6,17 @@
     const code = ref('')
 
     onMounted(() => {
+        updateLocalCopy()
+    })
+
+    function updateLocalCopy() {
         if (model.value[0] === undefined || typeof model.value[0] === 'string') {
             code.value = model.value[0]
         }
+    }
+
+    watch(model, async (newModel) => {
+        updateLocalCopy()
     })
 
     watch(code, async (newCode, oldCode) => {

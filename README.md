@@ -27,18 +27,22 @@ To get started with SkillAegis-Editor, follow these steps:
     ```bash
     python -V
     ```
-1. Install dependencies
+1. Initialize submodules
+   ```bash
+   git submodule update --init --recursive
+   ```
+2. Install dependencies
    ```bash
    python3 -m venv venv
    source venv/bin/activate
    pip3 install -r requirements.txt
    ```
-2. Clone the configuration file
+3. Clone the configuration file
     ```bash
     cp config.py.sample config.py
     ```
     - [optional] Update the configuration
-3. Start the application
+4. Start the application
    ```bash
    # Usage: ./start.sh --exercise_folder <folder> [--host <host>] [--port <port>]
    ./start.sh --exercise_folder scenarios/
