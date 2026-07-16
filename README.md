@@ -59,9 +59,8 @@ validate an evaluation.
 *Build a completion rule on the left and watch it pass or fail against sample data on the right, in the same view.*
 
 > [!TIP]
-> Deeper references live under [`docs/`](./docs): [evaluation strategies](./docs/evaluation-strategies.md),
-> the [comparison operators reference](./docs/comparison-operators.md), and the
-> [inject-designer redesign](./docs/redesign) proposal with its clickable prototypes.
+> Deeper references live under [`docs/`](./docs): [evaluation strategies](./docs/evaluation-strategies.md)
+> and the [comparison operators reference](./docs/comparison-operators.md).
 
 
 ## Installation

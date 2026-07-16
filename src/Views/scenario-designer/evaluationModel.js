@@ -305,7 +305,6 @@ export function emptyCondition() {
 
 /* ==========================================================================
  * Guided query builder — FROM / WHERE / CHECK
- * See docs/redesign/PRD-condition-query-builder.md.
  *
  * A condition's jq `path` is modelled as a small query:
  *   { source, eventField?, filters: [{ field, op, value }], project }

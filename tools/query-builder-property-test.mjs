@@ -2,7 +2,6 @@
 //
 // Property test for the guided query builder's pure core (buildPathFromQuery /
 // parseQueryFromPath in src/Views/scenario-designer/evaluationModel.js).
-// See docs/redesign/PRD-condition-query-builder.md §12.
 //
 // Run:  node tools/query-builder-property-test.mjs
 // Exits non-zero on any invariant violation.
