@@ -2,30 +2,25 @@
 import { v4 as uuidv4 } from 'uuid'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { Sortable } from 'sortablejs-vue3'
-import PeriodicRate from '@/Views/scenario-designer/PeriodicRate.vue'
 import {
   addNewInjectToSelectedScenario,
   removeInjectFromSelectedScenario,
   updateInjectToSelectedScenario,
   selectedScenario as originalSelectedScenario
 } from '@/store.js'
-import { Mode } from 'vanilla-jsoneditor'
 import {
-  faArrowDownWideShort,
-  faArrowUpWideShort,
+  faChevronLeft,
+  faChevronRight,
   faCirclePlay,
-  faEdit,
-  faFingerprint,
+  faCircleCheck,
   faGripVertical,
-  faInfoCircle,
   faListCheck,
-  faMinus,
   faPlus,
   faSave,
   faScrewdriverWrench,
   faTimes,
   faTrash,
-  faStopwatch,
+  faTriangleExclamation,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   ref,
@@ -35,86 +30,119 @@ import {
   watch,
   nextTick,
 } from 'vue'
-import JsonEditorVue from 'json-editor-vue'
 import { saveInject, removeInject, saveInjectOrder } from '@/api'
 import { ajaxFeedback, toast } from '@/main'
-import InjectEvaluationPythonEditorWrapper from '@/components/InjectEvaluationPythonEditorWrapper.vue'
+import {
+  isComparisonStrategy,
+  conditionsFromParameters,
+} from '@/Views/scenario-designer/evaluationModel.js'
+import StepTracker from '@/Views/scenario-designer/StepTracker.vue'
+import TaskStep from '@/Views/scenario-designer/TaskStep.vue'
+import FlowStep from '@/Views/scenario-designer/FlowStep.vue'
+import CompletionStep from '@/Views/scenario-designer/CompletionStep.vue'
 
 const props = defineProps({
   uuid: String
 })
 
-const ALLOWED_STRATEGIES_FOR_TOOLS = {
-  'MISP': {
-    data_filtering: 'Filter Event data',
-    query_mirror: 'Perform the same query against MISP',
-    query_search: 'Perform a search query on MISP and compare the returned result',
-    python: 'Run a python function',
-  },
-  'suricata': {
-    simulate_ips: 'Simulate IPS strategy - Validate if an alert was raised',
-  },
-  'webhook': {
-    data_filtering: 'Filter data sent to the webhook endpoint',
-    misp_query_search: 'Perform a web query on the provided MISP URL and compare the returned result',
-    python: 'Run a python function',
-  },
-}
-const ALLOWED_TRIGGERS = {
-  manual: 'Manually trigger by external tools',
-  startex: 'Start of the exercise',
-  periodic: 'Periodically runs based on the timing function',
-  triggered_at: 'Runs once based on the timing function',
-}
-const ALLOWED_TARGET_TOOLS = {
-  MISP: 'MISP',
-  suricata: 'Suricata',
-  webhook: 'Webhook',
-}
-const ALLOWED_TRIGGER_FOR_STRATEGIES = {
-  periodic: {
-    MISP: ['query_search', 'python'],
-  },
-  triggered_at: {
-    MISP: ['query_search', 'python'],
-  },
-}
-
 const route = useRoute()
 const router = useRouter()
 
+// When arriving from the Scenario Map's "Open in Designer", ?inject=<uuid>
+// pre-selects that inject. Applied at most once per navigation so later store
+// updates (e.g. after a save) never yank the selection back.
+let querySelectApplied = false
+function maybeSelectFromQuery() {
+  if (querySelectApplied) {
+    return
+  }
+  const wanted = route.query.inject
+  if (!wanted) {
+    querySelectApplied = true
+    return
+  }
+  if (injectByUUID.value[wanted]) {
+    querySelectApplied = true
+    doSelectInject(wanted)
+    step.value = 0
+    router.replace({ name: 'Scenario Designer', params: { uuid: props.uuid }, query: {} })
+  }
+}
+
+// Tool accent hues for the rail chips (PRD §11).
+const TOOL_CHIP = {
+  MISP: 'bg-indigo-600 text-white',
+  suricata: 'bg-amber-500 text-white',
+  webhook: 'bg-violet-600 text-white',
+}
+
+// Set by explicit actions (Cancel) that intend to discard, so the leave prompt
+// below doesn't double-ask.
+let bypassLeaveGuard = false
+
+function hasUnsavedWork() {
+  const dirtySelected = selectedInjectFlowUUID.value && injectDiffersFromSaved.value
+  return Boolean(dirtySelected) || newUnsavedInjects.length > 0
+}
+
+// Warn on hard browser navigation (refresh / tab close) when work is unsaved.
+function beforeUnloadHandler(event) {
+  if (hasUnsavedWork()) {
+    event.preventDefault()
+    event.returnValue = ''
+  }
+}
+
 onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', beforeUnloadHandler)
+  stickyObserver?.disconnect()
+  uninstallScrollGuard()
   resetState()
 })
 
 onMounted(() => {
+  window.addEventListener('beforeunload', beforeUnloadHandler)
+  // Raise a shadow under the step tracker once it sticks to the top: watch a
+  // 1px sentinel placed just above it — when the sentinel scrolls out of view,
+  // the tracker has stuck.
+  // threshold 0: the sentinel counts as "visible" while any part is in view, so
+  // the shadow flips on only once it has fully scrolled past the top (stuck) —
+  // a 1px sentinel at threshold 1 reads as off-screen due to subpixel rounding.
+  stickyObserver = new IntersectionObserver(
+    ([entry]) => {
+      stickyStuck.value = !entry.isIntersecting
+    },
+    { threshold: 0 }
+  )
+  installScrollGuard()
   resetState()
+  maybeSelectFromQuery()
 })
 
 watch(
   () => route.params.uuid,
   () => {
+    querySelectApplied = false
     resetState()
   }
 )
 
-onBeforeRouteLeave(async (to, from) => {
+onBeforeRouteLeave(async () => {
+  if (!bypassLeaveGuard && hasUnsavedWork()) {
+    const proceed = window.confirm(
+      'You have unsaved inject changes or new injects that have not been saved. Leave this page and discard them?'
+    )
+    if (!proceed) {
+      return false
+    }
+  }
+  bypassLeaveGuard = false
   newUnsavedInjects.forEach((inject_uuid) => {
     removeInjectFromSelectedScenario(inject_uuid)
   })
   resetState()
 })
 
-const showEditor = ref(true)
-const showTimingSettings = computed(() => {
-  return showTimingSettingsPeriodic.value || showTimingSettingsTriggeredAt.value
-})
-const showTimingSettingsPeriodic = computed(() => {
-  return selectedInjectFlow.value.sequence.trigger.includes('periodic')
-})
-const showTimingSettingsTriggeredAt = computed(() => {
-  return selectedInjectFlow.value.sequence.trigger.includes('triggered_at')
-})
 const canBeSaved = computed(() => {
   return hasValidChanges.value
 })
@@ -137,17 +165,20 @@ const getFormErrors = computed(() => {
   return errors
 })
 
-const injectMovedPosition = computed(() => {
-  return injectOrderOperations.value.length > 0
-})
+const nameInvalid = computed(() => getFormErrors.value.includes('selectedInject.name'))
 
-const hasValidChanges = computed(() => {
+// True when the selected inject/flow differs from what is persisted. Kept
+// independent of validity so the dirty-state guards (switching inject, leaving
+// the route) still warn about unsaved-but-invalid edits. `hasValidChanges`
+// (which drives the Save button) layers the error check on top.
+const injectDiffersFromSaved = computed(() => {
   if (!selectedInject.value) {
     return false
   }
 
-  if (hasErrors.value) {
-    return false
+  // A freshly created inject that was never persisted is always "dirty".
+  if (newUnsavedInjects.includes(selectedInjectFlowUUID.value)) {
+    return true
   }
 
   const originalSelectedInject = originalSelectedScenario.value.injects.filter(
@@ -166,10 +197,13 @@ const hasValidChanges = computed(() => {
 
   let sequenceWithoutFakeOptions = {}
   if (typeof selectedInjectFlow.value.sequence === 'object') {
-    sequenceWithoutFakeOptions = selectedInjectFlow.value.sequence
-    sequenceWithoutFakeOptions.trigger = sequenceWithoutFakeOptions.trigger.filter(
-      (item) => item != 'null'
-    )
+    // Build a filtered *copy* — never mutate the reactive sequence here, or
+    // this computed (read during render) would write a dep it reads and Vue
+    // would stop the render effect ("maximum recursive updates").
+    sequenceWithoutFakeOptions = {
+      ...selectedInjectFlow.value.sequence,
+      trigger: selectedInjectFlow.value.sequence.trigger.filter((item) => item != 'null'),
+    }
   }
   let sequence_str =
     typeof selectedInjectFlow.value.sequence === 'object'
@@ -213,7 +247,7 @@ const hasValidChanges = computed(() => {
     if (orig_inject_eval === undefined) { // New inject_eval hasn't been saved yet
       return true
     }
-    
+
     if (inject_eval.score_range[1] != orig_inject_eval.score_range[1]) {
       return true
     }
@@ -278,6 +312,8 @@ const hasValidChanges = computed(() => {
   return false
 })
 
+const hasValidChanges = computed(() => !hasErrors.value && injectDiffersFromSaved.value)
+
 const selectedScenario = computed(() => {
   return originalSelectedScenario.value !== null
     ? JSON.parse(JSON.stringify(originalSelectedScenario.value))
@@ -286,11 +322,70 @@ const selectedScenario = computed(() => {
 
 let originalInject = {}
 let originalInjectFlow = {}
-let injectOrderOperations = ref([])
 const selectedInject = ref(null)
 const selectedInjectFlow = ref(null)
 const selectedInjectFlowUUID = ref(null)
+const step = ref(0)
 let newUnsavedInjects = []
+
+/* ---- sticky step-tracker shadow ---- */
+const stickyStuck = ref(false)
+const stickySentinel = ref(null)
+let stickyObserver = null
+
+// The sentinel is conditionally rendered (only when an inject is selected), so
+// (re)attach the observer whenever the element appears or goes away.
+watch(stickySentinel, (el) => {
+  if (!stickyObserver) {
+    return
+  }
+  stickyObserver.disconnect()
+  stickyStuck.value = false
+  if (el) {
+    stickyObserver.observe(el)
+  }
+})
+
+/* ---- suppress the editors' mount-time auto-scroll ---- */
+// The Completion step's editors (vanilla-jsoneditor / CodeMirror) call
+// window.scrollBy via their own scrollIntoView as they mount and measure —
+// sometimes several hundred ms later — which yanks the page down when opening
+// or switching an inject. We can't configure that off, so while a step/inject
+// is settling we make *programmatic* window scrolls no-ops. Native user
+// scrolling (wheel/touch/keyboard/scrollbar) goes through the browser's input
+// path, not these methods, so the user is never blocked — and because the
+// scroll is prevented rather than undone, there is no flicker. Patched on mount,
+// restored on unmount; `nativeScrollTo` is our own un-guarded escape hatch.
+let autoScrollSuppressedUntil = 0
+const origScrollTo = window.scrollTo
+const origScroll = window.scroll
+const origScrollBy = window.scrollBy
+const nativeScrollTo = origScrollTo.bind(window)
+
+function suppressEditorAutoScroll() {
+  autoScrollSuppressedUntil = performance.now() + 1500
+}
+function installScrollGuard() {
+  const guard = (orig) =>
+    function (...args) {
+      if (performance.now() < autoScrollSuppressedUntil) {
+        return
+      }
+      return orig.apply(window, args)
+    }
+  window.scrollTo = guard(origScrollTo)
+  window.scroll = guard(origScroll)
+  window.scrollBy = guard(origScrollBy)
+}
+function uninstallScrollGuard() {
+  window.scrollTo = origScrollTo
+  window.scroll = origScroll
+  window.scrollBy = origScrollBy
+}
+
+// Every step change shows the new step from its top, with the editors' auto
+// scroll suppressed (fixes the Completion step opening scrolled-down).
+watch(step, () => scrollToTop())
 
 const emptyInject = {
   uuid: '',
@@ -306,6 +401,7 @@ const emptyInjectFlow = {
     inject_uuid: null
   },
   sequence: {
+    completion_trigger: [],
     followed_by: [],
     trigger: []
   },
@@ -313,17 +409,6 @@ const emptyInjectFlow = {
     triggered_at: null,
     periodic_run_every: null,
   }
-}
-
-function getEmptyInjectEvaluation() {
-  const emptyInjectEvaluation = {
-    parameters: [],
-    result: '',
-    evaluation_strategy: Object.keys(ALLOWED_STRATEGIES_FOR_TOOLS[selectedInject.value.target_tool])[0],
-    evaluation_context: {},
-    score_range: [0, 20]
-  }
-  return emptyInjectEvaluation
 }
 
 const injectByUUID = computed(() => {
@@ -346,13 +431,154 @@ const injectFlowByUUID = computed(() => {
   return injectF
 })
 
+// Fallback for a direct load/refresh where the scenario data arrives after
+// mount: apply the ?inject= pre-selection once the injects are available.
+watch(injectByUUID, () => {
+  maybeSelectFromQuery()
+})
+
 const inject_flow = computed(() => {
   return selectedScenario.value?.inject_flow || []
 })
 
+// Lightweight list of every inject for the Flow step's dependency pickers.
+const injectList = computed(() =>
+  Object.values(injectByUUID.value).map((inject) => ({
+    uuid: inject.uuid,
+    name: inject.name,
+  }))
+)
+
+/* ---- guided stepper ---- */
+const STEPS = [
+  { key: 'task', label: 'Task', sub: 'What the trainee does' },
+  { key: 'flow', label: 'Flow', sub: 'When it runs' },
+  { key: 'eval', label: 'Completion & test', sub: "How it's scored" },
+]
+
+const taskDone = computed(() => (selectedInject.value?.name?.length ?? 0) > 1)
+const flowDone = computed(
+  () => (selectedInjectFlow.value?.sequence?.trigger?.length ?? 0) > 0
+)
+const completionDone = computed(
+  () => (selectedInject.value?.inject_evaluation?.length ?? 0) > 0
+)
+
+/* ---- per-step validation hints (non-blocking, except the name requirement) ---- */
+const taskIssues = computed(() => {
+  const issues = []
+  if (nameInvalid.value) {
+    issues.push('Give the inject a name (at least 2 characters).')
+  }
+  return issues
+})
+
+const flowIssues = computed(() => {
+  const flow = selectedInjectFlow.value
+  if (!flow) {
+    return []
+  }
+  const issues = []
+  const triggers = (flow.sequence?.trigger || []).filter((t) => t && t !== 'null')
+  if (triggers.length === 0) {
+    issues.push('No trigger set — this inject will never start on its own.')
+  }
+  if (triggers.includes('periodic') && !flow.timing?.periodic_run_every) {
+    issues.push('The periodic trigger has no rate set.')
+  }
+  if (triggers.includes('triggered_at') && !flow.timing?.triggered_at) {
+    issues.push('The “triggered at” timing has no delay set.')
+  }
+  const known = new Set(injectList.value.map((i) => i.uuid))
+  const stale = (flow.sequence?.followed_by || []).filter((u) => !known.has(u))
+  if (stale.length > 0) {
+    issues.push(
+      `Advanced chaining refers to ${stale.length} inject${stale.length > 1 ? 's' : ''} that no longer exist${stale.length > 1 ? '' : 's'}.`
+    )
+  }
+  return issues
+})
+
+const completionIssues = computed(() => {
+  const inject = selectedInject.value
+  if (!inject) {
+    return []
+  }
+  const issues = []
+  const evaluations = inject.inject_evaluation || []
+  if (evaluations.length === 0) {
+    issues.push('No evaluation — this inject can’t be scored or auto-completed.')
+  }
+  evaluations.forEach((evaluation, i) => {
+    if (isComparisonStrategy(evaluation.evaluation_strategy)) {
+      const parsed = conditionsFromParameters(evaluation.parameters)
+      if (parsed.ok && parsed.conditions.length === 0) {
+        issues.push(`Evaluation ${i + 1} has no conditions to check.`)
+      }
+    }
+  })
+  return issues
+})
+
+const stepIssues = computed(() => [taskIssues.value, flowIssues.value, completionIssues.value])
+const currentStepIssues = computed(() => stepIssues.value[step.value] || [])
+
+const steps = computed(() => [
+  { ...STEPS[0], done: taskDone.value, issues: taskIssues.value.length },
+  { ...STEPS[1], done: flowDone.value, issues: flowIssues.value.length },
+  { ...STEPS[2], done: completionDone.value, issues: completionIssues.value.length },
+])
+
+const isLastStep = computed(() => step.value >= STEPS.length - 1)
+
+function goStep(index) {
+  step.value = Math.max(0, Math.min(index, STEPS.length - 1))
+}
+function nextStep() {
+  if (!isLastStep.value) {
+    step.value += 1
+  }
+}
+function prevStep() {
+  if (step.value > 0) {
+    step.value -= 1
+  }
+}
+
+const saveState = computed(() => {
+  if (!selectedInject.value) {
+    return null
+  }
+  if (hasErrors.value) {
+    return { tone: 'warn', text: 'Fix the inject name to save' }
+  }
+  if (canBeSaved.value) {
+    return { tone: 'dirty', text: 'Unsaved changes' }
+  }
+  return { tone: 'saved', text: 'All changes saved' }
+})
+
+// Reordering persists immediately (mirrors the Scenario Map's per-edit model),
+// so there is a single "Save Inject" concept and no separate order button.
+// On failure we roll the list back to where it was.
 async function onDragEnd(event) {
-  moveInject(event.oldIndex, event.newIndex)
-  injectOrderOperations.value.push([event.oldIndex, event.newIndex])
+  const { oldIndex, newIndex } = event
+  if (oldIndex === newIndex) {
+    return
+  }
+  await moveInject(oldIndex, newIndex)
+  const injectOrder = inject_flow.value.map((i) => i.inject_uuid)
+  const result = await saveInjectOrder(props.uuid, injectOrder)
+  if (!result.success) {
+    await moveInject(newIndex, oldIndex)
+    if (sortable.value?.sortable) {
+      sortable.value.sortable.sort(
+        inject_flow.value.map((i) => i.inject_uuid),
+        true
+      )
+    }
+  }
+  ajaxFeedback(result)
 }
 
 async function moveInject(from, to) {
@@ -361,7 +587,30 @@ async function moveInject(from, to) {
   selectedScenario.value.inject_flow.splice(to, 0, item)
 }
 
+// Run `action`, but if the current inject has unsaved edits, ask first so we
+// never silently discard them (addresses P5's silent-revert-on-switch).
+function withUnsavedGuard(action, verb) {
+  if (selectedInjectFlowUUID.value && injectDiffersFromSaved.value) {
+    toast({
+      title: 'Discard unsaved changes?',
+      message: `“${selectedInject.value?.name || 'This inject'}” has unsaved changes. ${verb} and discard them?`,
+      variant: 'warning',
+      confirm: true,
+      confirmCb: action,
+    })
+    return
+  }
+  action()
+}
+
 function selectInject(uuid) {
+  if (selectedInjectFlowUUID.value === uuid) {
+    return
+  }
+  withUnsavedGuard(() => doSelectInject(uuid), 'Switch to another inject')
+}
+
+function doSelectInject(uuid) {
   if (selectedInjectFlowUUID.value) {
     revertInjectChanges()
   }
@@ -370,15 +619,25 @@ function selectInject(uuid) {
   selectedInject.value = injectByUUID.value[uuid]
   selectedInjectFlow.value = injectFlowByUUID.value[uuid]
   selectedInjectFlowUUID.value = uuid
+  // Switching injects keeps the current step but should show it from the top,
+  // not the previous inject's scroll offset.
+  scrollToTop()
+}
+
+// Jump to the top and suppress the editors' mount-time auto-scroll (see
+// suppressEditorAutoScroll). Called on inject select and on every step change.
+function scrollToTop() {
+  nativeScrollTo({ top: 0, left: 0, behavior: 'instant' })
+  suppressEditorAutoScroll()
 }
 
 function resetState() {
   sortableKey.value += 1
   revertInjectChanges()
-  revertInjectOrderChanges()
   selectedInject.value = null
   selectedInjectFlow.value = null
   selectedInjectFlowUUID.value = null
+  step.value = 0
 }
 
 function revertInjectChanges() {
@@ -388,36 +647,14 @@ function revertInjectChanges() {
   }
 }
 
-async function saveInjectOrderChanges() {
-  const injectOrder = inject_flow.value.map((i) => i.inject_uuid)
-  const result = await saveInjectOrder(props.uuid, injectOrder)
-  ajaxFeedback(result)
-  if (result.success) {
-    injectOrderOperations.value = []
-  }
-}
-
 function cancel() {
+  // Explicit "Cancel" is an intentional discard — skip the leave prompt.
+  bypassLeaveGuard = true
   router.push({ name: 'Scenario Overview', params: { uuid: props.uuid }, props: true })
-}
-
-function testInject(inject_evaluation) {
-  router.push({ name: 'Inject Tester', params: { inject_evaluation: JSON.stringify(inject_evaluation) }, props: true })
 }
 
 const sortable = ref()
 const sortableKey = ref(0)
-async function revertInjectOrderChanges() {
-  if (sortable.value?.sortable) {
-    var order = sortable.value.sortable.toArray()
-    injectOrderOperations.value.reverse().forEach(([from, to]) => {
-      const item = order.splice(to, 1)[0]
-      order.splice(from, 0, item)
-    })
-    sortable.value.sortable.sort(order, true)
-    injectOrderOperations.value = []
-  }
-}
 
 async function saveInjectChanges() {
   const injectTosave = JSON.parse(JSON.stringify(selectedInject.value))
@@ -443,6 +680,10 @@ async function saveInjectChanges() {
 }
 
 function createNewInject() {
+  withUnsavedGuard(() => doCreateNewInject(), 'Create a new inject')
+}
+
+function doCreateNewInject() {
   const uuid = uuidv4()
   const newInject = JSON.parse(JSON.stringify(emptyInject))
   newInject.uuid = uuid
@@ -450,7 +691,8 @@ function createNewInject() {
   newInjectFlow.inject_uuid = uuid
   newUnsavedInjects.push(uuid)
   addNewInjectToSelectedScenario(newInject, newInjectFlow)
-  selectInject(uuid)
+  doSelectInject(uuid)
+  step.value = 0
 }
 
 async function deleteInjectConfirm(inject_uuid) {
@@ -489,484 +731,251 @@ async function deleteInject(inject_uuid) {
   return ajaxDone ? ajaxFeedback(result) : true
 }
 
-function createNewInjectEval() {
-  const newInjectEvaluation = getEmptyInjectEvaluation()
-  selectedInject.value.inject_evaluation.push(newInjectEvaluation)
-}
-
-function deleteEvaluation(evaluationIndex) {
-  selectedInject.value.inject_evaluation.splice(evaluationIndex, 1)
+function triggerSummary(injectFlow) {
+  const triggers = (injectFlow?.sequence?.trigger || []).filter((t) => t && t != 'null' && t != '- No trigger -')
+  return triggers.length > 0 ? triggers.join(', ') : null
 }
 </script>
 
 <template>
-  <div>
-    <div class="flex justify-end gap-2">
-      <button class="btn btn-danger select-none" @click="cancel()">
-        <FontAwesomeIcon :icon="faTimes" class="fa-fw"></FontAwesomeIcon> Cancel Changes
-      </button>
-      <button
-        :class="`btn btn-success select-none ${canBeSaved ? 'highlight-success' : ''}`"
-        @click="saveInjectChanges()"
-        :disabled="!canBeSaved"
+  <div class="flex flex-col lg:flex-row gap-6">
+    <!-- ===== Inject rail ===== -->
+    <aside class="w-full lg:w-[300px] shrink-0 flex flex-col">
+      <div class="flex items-center gap-2 mb-2">
+        <h2 class="text-xl font-bold">Injects</h2>
+        <span class="text-sm text-slate-400 font-mono">{{ inject_flow.length }}</span>
+        <span
+          v-if="inject_flow.length > 1"
+          class="ml-auto text-2xs text-slate-400 select-none"
+          title="Reordering is saved automatically"
+        >
+          <FontAwesomeIcon :icon="faGripVertical" class="fa-fw"></FontAwesomeIcon>
+          drag to reorder
+        </span>
+      </div>
+
+      <Alert
+        v-if="inject_flow.length == 0"
+        variant="warning"
+        title="No inject available"
+        message="Create an inject to get started."
+      ></Alert>
+
+      <Sortable
+        :key="sortableKey"
+        ref="sortable"
+        :list="inject_flow"
+        item-key="inject_uuid"
+        tag="div"
+        :options="{
+          animation: 170,
+          ghostClass: 'ghost',
+          dragClass: 'drag',
+          handle: '.drag-handle',
+          forceFallback: true
+        }"
+        @end="onDragEnd"
+        class="flex flex-col gap-1.5"
       >
-        <FontAwesomeIcon :icon="faEdit" class="fa-fw"></FontAwesomeIcon> Save Inject Changes
-      </button>
-    </div>
-
-    <div class="flex flex-row gap-8">
-      <div class="basis-2/5">
-        <div class="flex gap-2">
-          <h2 class="text-2xl">Injects</h2>
-          <div class="ml-auto flex gap-2">
-            <button
-              class="btn btn-danger select-none"
-              :disabled="!injectMovedPosition"
-              @click="revertInjectOrderChanges()"
-            >
-              <FontAwesomeIcon :icon="faArrowUpWideShort" class="fa-fw"></FontAwesomeIcon>Reset Order
-            </button>
-            <button
-              :class="`btn btn-success select-none ${
-                injectMovedPosition ? 'highlight-success' : ''
-              }`"
-              @click="saveInjectOrderChanges()"
-              :disabled="!injectMovedPosition"
-            >
-              <FontAwesomeIcon :icon="faArrowDownWideShort" class="fa-fw"></FontAwesomeIcon>Save
-              Inject Order
-            </button>
-          </div>
-        </div>
-        <div class="pl-2 flex flex-col gap-1 py-2">
-          <Alert
-            v-if="inject_flow.length == 0"
-            variant="warning"
-            title="No inject available"
-            message="Create an inject to get started."
-          ></Alert>
-          <Sortable
-            :key="sortableKey"
-            ref="sortable"
-            :list="inject_flow"
-            item-key="inject_uuid"
-            tag="div"
-            :options="{
-              animation: 170,
-              ghostClass: 'ghost',
-              dragClass: 'drag',
-              handle: '.drag-handle',
-              // filter: '.unsaved-inject',
-              forceFallback: true
+        <template #item="{ element, index }">
+          <div
+            @click="selectInject(element.inject_uuid)"
+            @keydown.enter.prevent="selectInject(element.inject_uuid)"
+            @keydown.space.prevent="selectInject(element.inject_uuid)"
+            :title="element.inject_uuid"
+            role="button"
+            tabindex="0"
+            :aria-current="selectedInjectFlowUUID == element.inject_uuid ? 'true' : undefined"
+            :aria-label="`Edit inject ${index + 1}: ${injectByUUID[element.inject_uuid].name || 'unnamed inject'}`"
+            class="group relative rounded-lg border py-2 pl-7 pr-2 select-none cursor-pointer transition-colors"
+            :class="{
+              'border-blue-400 bg-blue-50 ring-1 ring-blue-400': selectedInjectFlowUUID == element.inject_uuid,
+              'border-slate-300 bg-white hover:border-blue-300': selectedInjectFlowUUID != element.inject_uuid,
             }"
-            @end="onDragEnd"
-            class="flex flex-col gap-1"
           >
-            <template #item="{ element }">
-              <div
-                @click="selectInject(element.inject_uuid)"
-                class="group flex flex-col gap-1 py-1 px-2 rounded select-none cursor-pointer border"
-                :class="{
-                  'border-blue-400 bg-blue-100 -translate-x-2': selectedInjectFlowUUID == element.inject_uuid,
-                  'border-slate-400 bg-slate-50': selectedInjectFlowUUID != element.inject_uuid,
-                }"
+            <FontAwesomeIcon
+              :icon="faGripVertical"
+              class="fa-fw drag-handle absolute left-1.5 top-2.5 text-slate-400 cursor-grab"
+            ></FontAwesomeIcon>
+            <span class="absolute left-1.5 bottom-2 text-2xs text-slate-400 font-mono">#{{ index + 1 }}</span>
+
+            <div class="flex items-start gap-2">
+              <div class="min-w-0 grow">
+                <div class="font-semibold text-slate-800 truncate">
+                  {{ injectByUUID[element.inject_uuid].name || '- Unnamed inject -' }}
+                </div>
+                <div class="text-xs text-slate-500 truncate">
+                  <span v-if="injectByUUID[element.inject_uuid].description">
+                    {{ injectByUUID[element.inject_uuid].description }}
+                  </span>
+                  <span v-else class="italic text-slate-400">- No description -</span>
+                </div>
+              </div>
+              <button
+                class="hidden group-hover:inline-block focus-visible:inline-block btn btn-xs btn-danger select-none !border-slate-400 shrink-0"
+                title="Delete inject"
+                aria-label="Delete this inject"
+                @click.stop="deleteInjectConfirm(element.inject_uuid)"
+                @keydown.enter.stop
+                @keydown.space.stop
               >
-                <div class="flex flex-row gap-2 items-center">
-                  <FontAwesomeIcon
-                    :icon="faGripVertical"
-                    class="fa-fw drag-handle absolute text-lg cursor-grab"
-                  ></FontAwesomeIcon>
-                  <span class="font-semibold ml-7">
-                    {{ injectByUUID[element.inject_uuid].name }}
-                  </span>
-                  <FontAwesomeIcon :icon="faMinus" class="fa-fw"></FontAwesomeIcon>
-                  <span class="font-light">
-                    <span v-if="injectByUUID[element.inject_uuid].description">{{
-                      injectByUUID[element.inject_uuid].description
-                    }}</span>
-                    <span v-else class="font-light text-sm text-gray-500">- No description -</span>
-                  </span>
-                  <span class="ml-auto">
-                    <button
-                      class="hidden group-hover:inline-block btn btn-xs btn-danger select-none !border-slate-400"
-                      title="Delete inject"
-                      @click.stop="deleteInjectConfirm(element.inject_uuid)"
-                    >
-                      <FontAwesomeIcon :icon="faTrash" class="fa-fw"></FontAwesomeIcon>
-                    </button>
-                  </span>
-                </div>
-
-                <div class="flex flex-row gap-3 text-xs">
-                  <span class="bg-slate-300 rounded py-0.5 px-1 inline-flex flex-col font-semibold">
-                    <div class="justify-start text-nowrap">
-                      <FontAwesomeIcon :icon="faFingerprint" class="fa-fw"></FontAwesomeIcon>
-                      UUID
-                    </div>
-                    <div class="bg-slate-50 p-0.5 rounded">
-                      <span class="text-nowrap font-mono font-light text-2xs text-gray-800">{{
-                        element.inject_uuid
-                      }}</span>
-                    </div>
-                  </span>
-
-                  <span class="bg-slate-300 rounded py-0.5 px-1 inline-flex flex-col font-semibold">
-                    <div class="justify-start text-nowrap">
-                      <FontAwesomeIcon :icon="faCirclePlay" class="fa-fw"></FontAwesomeIcon>
-                      Trigger
-                    </div>
-                    <span class="bg-slate-50 p-0.5 mt-0.5 rounded">
-                      <span
-                        v-if="
-                          injectFlowByUUID[element.inject_uuid].sequence.trigger.filter(
-                            (t) => t != '- No trigger -'
-                          ).length > 0
-                        "
-                        >{{
-                          injectFlowByUUID[element.inject_uuid].sequence.trigger
-                            .filter((t) => t != '- No trigger -')
-                            .join(', ')
-                        }}</span
-                      >
-                      <span v-else class="text-nowrap font-light text-xs text-gray-500"
-                        >- No trigger -</span
-                      >
-                    </span>
-                  </span>
-
-                  <span class="bg-slate-300 rounded py-0.5 px-1 inline-flex flex-col font-semibold">
-                    <div class="justify-start text-nowrap">
-                      <FontAwesomeIcon :icon="faScrewdriverWrench" class="fa-fw"></FontAwesomeIcon>
-                      Target Tool
-                    </div>
-                    <span class="bg-slate-50 p-0.5 mt-0.5 rounded">
-                      {{ injectByUUID[element.inject_uuid].target_tool }}
-                    </span>
-                  </span>
-
-                  <span class="bg-slate-300 rounded py-0.5 px-1 inline-flex flex-col font-semibold">
-                    <div class="justify-start text-nowrap">
-                      <FontAwesomeIcon :icon="faListCheck" class="fa-fw"></FontAwesomeIcon>
-                      Inject Evaluation
-                    </div>
-                    <span class="bg-slate-50 p-0.5 mt-0.5 rounded">
-                      {{ injectByUUID[element.inject_uuid].inject_evaluation.length }}
-                    </span>
-                  </span>
-                </div>
-              </div>
-            </template>
-          </Sortable>
-        </div>
-
-        <div class="flex justify-end">
-          <button class="btn btn-success select-none" @click="createNewInject()">
-            <FontAwesomeIcon :icon="faPlus" class="fa-fw"></FontAwesomeIcon>Create New Inject
-          </button>
-        </div>
-      </div>
-
-      <div class="basis-3/5">
-        <h2 class="text-2xl mb-2">Design Inject</h2>
-        <Alert v-show="!selectedInject" variant="info" :title="'Select an inject to edit'"></Alert>
-        <div v-if="selectedInject">
-          <form class="mb-3">
-            <div class="flex flex-col gap-3">
-              <div class="flex flex-row gap-6">
-                <div class="basis-1/4">
-                  <label for="name" class="block text-gray-700 font-bold mb-1">Inject Name</label>
-                  <input
-                    type="text"
-                    v-model="selectedInject.name"
-                    :class="`shadow border w-full rounded py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:border-slate-400 ${
-                      getFormErrors.includes('selectedInject.name') ? 'form-error' : ''
-                    }`"
-                    id="name"
-                    placeholder="A name"
-                  />
-                </div>
-
-                <div class="flex-grow">
-                  <label for="description" class="block text-gray-700 font-bold mb-1"
-                    >Inject Description</label
-                  >
-                  <input
-                    type="text"
-                    v-model="selectedInject.description"
-                    :class="`shadow border w-full rounded py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:border focus:border-slate-400 ${
-                      getFormErrors.includes('selectedInject.description') ? 'form-error' : ''
-                    }`"
-                    id="description"
-                    placeholder="A description"
-                  />
-                </div>
-                <div class="">
-                  <label for="target_tool" class="block text-gray-700 font-bold mb-1">
-                    <FontAwesomeIcon :icon="faScrewdriverWrench" class="fa-fw"></FontAwesomeIcon>
-                    Target Tool
-                  </label>
-                  <select
-                    v-model="selectedInject.target_tool"
-                    class="shadow border w-full rounded py-2 px-2 text-gray-700 leading-tight focus:outline-none focus:border-slate-400 bg-white"
-                    id="target_tool"
-                    placeholder="MISP"
-                  >
-                    <option
-                      v-for="(tool_info, tool) in ALLOWED_TARGET_TOOLS"
-                      :key="tool"
-                      :value="tool"
-                      :title="tool_info"
-                    >
-                      {{ tool }}
-                    </option>
-                  </select>
-                </div>
-              </div>
-
-              <div class="flex flex-row gap-6">
-                <div class="basis-1/3">
-                  <label for="name" class="block text-gray-700 font-bold mb-1">Triggers</label>
-                  <Dropdown
-                    v-model="selectedInjectFlow.sequence.trigger"
-                    :options="ALLOWED_TRIGGERS"
-                    searchable
-                    multiple
-                    placeholder="- No trigger -"
-                    class="max-w-2xl"
-                  >
-                    <template #tag_text="{option, textGetter}">
-                      <span class="text-red-700 font-mono py-0.5 px-1 rounded-sm bg-gray-50 mr-1">[{{ option }}]</span> {{ textGetter(option) }}
-                    </template>
-                    <template #option="{option, textGetter}">
-                      <span class="text-red-700 font-mono py-0.5 px-1 rounded-sm bg-gray-50 border mr-1">[{{ option }}]</span> {{ textGetter(option) }}
-                    </template>
-                  </Dropdown>
-                </div>
-                <div class="basis-2/3">
-                  <label for="requirement" class="block text-gray-700 font-bold mb-1"
-                    >Inject Completion Requirement</label
-                  >
-                  <Dropdown
-                    id="requirement"
-                    v-model="selectedInjectFlow.requirements.inject_uuid"
-                    :options="Object.values(injectByUUID).map((inject) => {
-                      return {
-                        value: inject.uuid,
-                        label: inject.name,
-                        disabled: inject.uuid == selectedInject.uuid
-                      }
-                    })"
-                    trackBy="value"
-                    searchable
-                    placeholder="- No requirements -"
-                  ></Dropdown>
-                </div>
-              </div>
-
-              <div class="flex flex-row gap-6">
-                <div 
-                  v-if="showTimingSettings"
-                  class="flex-grow ml-3 p-2 rounded shadow-md border border-slate-200 bg-slate-100"
-                >
-                  <label class="block text-gray-700 font-bold mb-1">
-                    <FontAwesomeIcon :icon="faStopwatch" class="fa-fw"></FontAwesomeIcon>
-                    Timing Function{{ showTimingSettingsTriggeredAt && showTimingSettingsPeriodic ? 's' : ''}}
-                  </label
-                  >
-                  <div class="flex flex-col gap-1">
-                    <div v-show="showTimingSettingsTriggeredAt">
-                      <span class="select-none p-1">
-                        <span class="text-red-700 font-mono py-0.5 px-1 rounded-sm bg-white mr-1 border-gray-300 border">[triggered_at]</span>
-                        Triggers
-                      </span>
-                      <span class="p-1">
-                        <PeriodicRate v-model="selectedInjectFlow.timing.triggered_at"></PeriodicRate>
-                      </span>
-                        after exercise start.
-                        <Alert
-                          v-if="ALLOWED_TRIGGER_FOR_STRATEGIES.triggered_at[selectedInject.target_tool]"
-                          class="ml-2 mt-1"
-                          variant="warning"
-                          :title="`Only works for strategy: ${ALLOWED_TRIGGER_FOR_STRATEGIES.triggered_at[selectedInject.target_tool].join(', ')}`"
-                        >
-                        </Alert>
-                    </div>
-                    <div v-show="showTimingSettingsPeriodic">
-                      <span class="select-none p-1">
-                        <span class="text-red-700 font-mono py-0.5 px-1 rounded-sm bg-white mr-1 border-gray-300 border">[periodic]</span>
-                        Rate
-                      </span>
-                      <span class="p-1">
-                        <PeriodicRate v-model="selectedInjectFlow.timing.periodic_run_every"></PeriodicRate>
-                      </span>
-                      <Alert
-                        v-if="ALLOWED_TRIGGER_FOR_STRATEGIES.triggered_at[selectedInject.target_tool]"
-                        class="ml-2 mt-1"
-                        variant="warning"
-                        :title="`Only works for strategy: ${ALLOWED_TRIGGER_FOR_STRATEGIES.periodic[selectedInject.target_tool].join(', ')}`"
-                      >
-                      </Alert>
-                    </div>
-                  </div>
-                </div>
-              </div>
+                <FontAwesomeIcon :icon="faTrash" class="fa-fw"></FontAwesomeIcon>
+              </button>
             </div>
-          </form>
 
-          <div>
-            <h2 class="text-xl mb-2">Inject Evaluations</h2>
-            <div>
-              <Alert
-                v-if="selectedInject?.inject_evaluation.length == 0"
-                variant="info"
-                title="No evaluation available"
-                message="Add an inject to get started."
-              ></Alert>
-              <div
-                v-if="selectedInject?.inject_evaluation.length > 1"
-                title="Allows to choose how multiple inject evaluation are combined. It determines whether all inject evaluation must be met (AND) or if meeting any evaluation is sufficient (OR) for validating this inject."
-                class="mb-2"
+            <div class="flex flex-wrap items-center gap-1 mt-2">
+              <span
+                class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-semibold"
+                :class="TOOL_CHIP[injectByUUID[element.inject_uuid].target_tool] || 'bg-slate-500 text-white'"
               >
-                <span class="font-semibold pt-1 text-nowrap">Inject Evaluations Join Type</span>
-                <span class="ml-2">
-                  <select
-                    v-model="selectedInject.inject_evaluation_join_type"
-                    class="shadow border min-w-20 rounded py-2 px-2 text-gray-700 leading-tight focus:outline-none focus:border-slate-400 bg-white"
-                  >
-                    <option :value="'OR'">OR</option>
-                    <option :value="'AND'">AND</option>
-                  </select>
-                </span>
-              </div>
-              <div class="flex flex-col gap-9">
-                <div
-                  v-for="(inject_eval, i) in selectedInject?.inject_evaluation"
-                  :key="i"
-                  class="relative flex flex-col gap-1 py-1 px-2 border border-slate-400 rounded bg-slate-200"
-                >
-                  <div class="relative">
-                    <span
-                      class="font-semibold select-none absolute px-1 -top-1 -left-2 bg-slate-300 border-slate-400 text-slate-700 rounded-br rounded-tl border-b border-r"
-                    >
-                      <span>Evaluation {{ i + 1 }}</span>
-                      <button
-                        class="btn btn-sm btn-danger select-none ml-2"
-                        @click="deleteEvaluation(i)"
-                      >
-                        <FontAwesomeIcon :icon="faTrash" class="fa-fw"></FontAwesomeIcon>
-                      </button>
-                      <button
-                        class="btn btn-sm btn-info select-none"
-                        @click="testInject(selectedInject.inject_evaluation[i])"
-                      >
-                        <FontAwesomeIcon :icon="faListCheck" class="fa-fw"></FontAwesomeIcon>
-                      </button>
-                    </span>
-                    <div class="flex gap-3 mt-8">
-                      <div class="basis-1/3">
-                        <div>
-                          <div class="font-semibold pt-1 text-nowrap">Evaluation Strategy</div>
-                          <div class="min-w-60">
-                            <select
-                              v-model="selectedInject.inject_evaluation[i].evaluation_strategy"
-                              class="shadow border w-full rounded py-2 px-2 text-gray-700 leading-tight focus:outline-none focus:border-slate-400 bg-white"
-                              placeholder="Evaluation Strategy"
-                            >
-                              <option
-                                v-for="(strategy_info, strategy) in ALLOWED_STRATEGIES_FOR_TOOLS[selectedInject.target_tool]"
-                                :key="strategy"
-                                :value="strategy"
-                                :title="strategy_info"
-                              >
-                                {{ strategy }}
-                              </option>
-                            </select>
-                          </div>
-                        </div>
-                        <div>
-                          <div class="font-semibold pt-2">Max Score</div>
-                          <div class="min-w-60">
-                            <input
-                              type="number"
-                              min="0"
-                              v-model="selectedInject.inject_evaluation[i].score_range[1]"
-                              class="shadow border font-mono w-full rounded py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:border focus:border-slate-400"
-                              placeholder="20"
-                            />
-                          </div>
-                        </div>
-                        <div>
-                          <div class="font-semibold pt-2">Result</div>
-                          <div class="min-w-60">
-                            <input
-                              type="text"
-                              v-model="selectedInject.inject_evaluation[i].result"
-                              class="shadow border font-mono w-full rounded py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:border focus:border-slate-400"
-                              placeholder="Data created"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                      <div class="basis-2/3 -mt-5">
-                        <div class="font-semibold">Evaluation Context</div>
-                        <div class="min-w-60">
-                          <JsonEditorVue
-                            v-if="showEditor"
-                            v-model="selectedInject.inject_evaluation[i].evaluation_context"
-                            :mode="Mode.text"
-                            :mainMenuBar="false"
-                            :navigationBar="false"
-                            :statusBar="false"
-                            :indentation="2"
-                            class="shadow-lg border w-full"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <h3 class="text-lg my-2">Evaluation Parameters</h3>
-                    <div v-if="showEditor && selectedInject.inject_evaluation[i].evaluation_strategy == 'python'">
-                      <InjectEvaluationPythonEditorWrapper
-                        v-model="selectedInject.inject_evaluation[i].parameters"
-                      ></InjectEvaluationPythonEditorWrapper>
-                    </div>
-                    <JsonEditorVue
-                      v-else-if="showEditor"
-                      v-model="selectedInject.inject_evaluation[i].parameters"
-                      :mode="Mode.text"
-                      :mainMenuBar="false"
-                      :indentation="4"
-                      class="shadow-lg border w-full"
-                    />
-                  </div>
-
-                  <div
-                    class="absolute -bottom-8 w-full text-center"
-                    v-if="
-                      selectedInject?.inject_evaluation?.length > 1 &&
-                      (true || selectedInject?.inject_evaluation_join_type?.length > 0) &&
-                      i != selectedInject.inject_evaluation.length - 1
-                    "
-                  >
-                    <span class="py-0.5 px-5 -ml-2 text-white bg-blue-600 shadow-md font-semibold text-lg rounded">
-                      {{ selectedInject.inject_evaluation_join_type ?? '- Select one -' }}
-                    </span>
-                  </div>
-
-                </div>
-              </div>
-
-              <div class="flex justify-center mt-2">
-                <button class="btn btn-success select-none" @click="createNewInjectEval()">
-                  <FontAwesomeIcon :icon="faPlus" class="fa-fw"></FontAwesomeIcon>Add New Evaluation
-                </button>
-              </div>
+                <FontAwesomeIcon :icon="faScrewdriverWrench" class="fa-fw"></FontAwesomeIcon>
+                {{ injectByUUID[element.inject_uuid].target_tool }}
+              </span>
+              <span
+                v-if="triggerSummary(injectFlowByUUID[element.inject_uuid])"
+                class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-mono font-semibold bg-slate-100 text-red-700 border border-slate-200"
+                title="Trigger"
+              >
+                <FontAwesomeIcon :icon="faCirclePlay" class="fa-fw"></FontAwesomeIcon>
+                {{ triggerSummary(injectFlowByUUID[element.inject_uuid]) }}
+              </span>
+              <span
+                class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-semibold border"
+                :class="
+                  injectByUUID[element.inject_uuid].inject_evaluation.length > 0
+                    ? 'bg-green-50 text-green-700 border-green-200'
+                    : 'bg-amber-50 text-amber-700 border-amber-200'
+                "
+              >
+                <FontAwesomeIcon :icon="faListCheck" class="fa-fw"></FontAwesomeIcon>
+                <template v-if="injectByUUID[element.inject_uuid].inject_evaluation.length > 0">
+                  {{ injectByUUID[element.inject_uuid].inject_evaluation.length }} eval
+                </template>
+                <template v-else>needs eval</template>
+              </span>
             </div>
           </div>
+        </template>
+      </Sortable>
+
+      <button class="btn btn-success select-none mt-3 justify-center" @click="createNewInject()">
+        <FontAwesomeIcon :icon="faPlus" class="fa-fw"></FontAwesomeIcon> Create New Inject
+      </button>
+    </aside>
+
+    <!-- ===== Guided stepper ===== -->
+    <section class="grow min-w-0">
+      <Alert
+        v-if="!selectedInject"
+        variant="info"
+        title="Select an inject to edit"
+        message="Pick an inject from the list, or create a new one to get started."
+      ></Alert>
+
+      <div v-else class="flex flex-col min-h-[600px]">
+        <!-- sentinel: when it scrolls out of view, the tracker below has stuck -->
+        <div ref="stickySentinel" aria-hidden="true" class="h-px -mb-px"></div>
+        <!-- sticky step tracker -->
+        <div
+          class="sticky top-0 z-10 bg-slate-50 pt-1 pb-3 -mx-1 px-1 transition-shadow duration-200"
+          :class="stickyStuck ? 'shadow-[0_6px_16px_-6px_rgba(15,23,42,0.22)]' : ''"
+        >
+          <StepTracker :steps="steps" :current="step" @go="goStep"></StepTracker>
+        </div>
+
+        <!-- step panel -->
+        <div class="grow py-4">
+          <!-- non-blocking validation hints for the active step -->
+          <div
+            v-if="currentStepIssues.length > 0"
+            class="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+          >
+            <div class="flex items-center gap-2 font-semibold">
+              <FontAwesomeIcon :icon="faTriangleExclamation" class="fa-fw"></FontAwesomeIcon>
+              {{ currentStepIssues.length }}
+              thing{{ currentStepIssues.length > 1 ? 's' : '' }} to check on this step
+            </div>
+            <ul class="mt-1 ml-6 list-disc space-y-0.5 text-amber-700">
+              <li v-for="(issue, i) in currentStepIssues" :key="i">{{ issue }}</li>
+            </ul>
+          </div>
+
+          <TaskStep
+            v-if="step === 0"
+            v-model:inject="selectedInject"
+            :name-invalid="nameInvalid"
+          ></TaskStep>
+          <FlowStep
+            v-else-if="step === 1"
+            :key="selectedInjectFlowUUID"
+            v-model:inject-flow="selectedInjectFlow"
+            :target-tool="selectedInject.target_tool"
+            :injects="injectList"
+            :current-uuid="selectedInjectFlowUUID"
+          ></FlowStep>
+          <CompletionStep
+            v-else-if="step === 2"
+            v-model:inject="selectedInject"
+            :target-tool="selectedInject.target_tool"
+          ></CompletionStep>
+        </div>
+
+        <!-- sticky footer nav -->
+        <div
+          class="sticky bottom-0 z-10 flex items-center gap-3 border-t border-slate-200 bg-white/95 backdrop-blur px-3 py-3 -mx-1 rounded-b-lg shadow-[0_-4px_16px_rgba(15,23,42,0.05)]"
+        >
+          <button class="btn select-none" :disabled="step === 0" @click="prevStep()">
+            <FontAwesomeIcon :icon="faChevronLeft" class="fa-fw"></FontAwesomeIcon> Back
+          </button>
+
+          <span
+            v-if="saveState"
+            class="flex items-center gap-2 text-sm"
+            :class="{
+              'text-amber-600': saveState.tone === 'warn',
+              'text-slate-500': saveState.tone !== 'warn',
+            }"
+          >
+            <FontAwesomeIcon
+              v-if="saveState.tone === 'warn'"
+              :icon="faTriangleExclamation"
+              class="fa-fw"
+            ></FontAwesomeIcon>
+            <FontAwesomeIcon
+              v-else-if="saveState.tone === 'saved'"
+              :icon="faCircleCheck"
+              class="fa-fw text-green-500"
+            ></FontAwesomeIcon>
+            <span
+              v-else
+              class="inline-block w-2 h-2 rounded-full bg-amber-500"
+            ></span>
+            {{ saveState.text }}
+          </span>
+
+          <span class="ml-auto flex items-center gap-2">
+            <button class="btn btn-danger select-none" @click="cancel()">
+              <FontAwesomeIcon :icon="faTimes" class="fa-fw"></FontAwesomeIcon> Cancel
+            </button>
+            <button
+              :class="`btn btn-success select-none ${canBeSaved ? 'highlight-success' : ''}`"
+              @click="saveInjectChanges()"
+              :disabled="!canBeSaved"
+            >
+              <FontAwesomeIcon :icon="faSave" class="fa-fw"></FontAwesomeIcon> Save Inject
+            </button>
+            <button
+              v-if="!isLastStep"
+              class="btn btn-info btn-colored select-none"
+              @click="nextStep()"
+            >
+              Next: {{ steps[step + 1].label }}
+              <FontAwesomeIcon :icon="faChevronRight" class="fa-fw"></FontAwesomeIcon>
+            </button>
+          </span>
         </div>
       </div>
-    </div>
+    </section>
   </div>
 </template>
 
@@ -974,18 +983,14 @@ function deleteEvaluation(evaluationIndex) {
 button.highlight-success {
   @apply bg-green-400;
 }
-input.form-error {
-  @apply border-2 border-red-400;
-}
 
 label {
   @apply select-none;
 }
 
 .ghost {
-  @apply bg-slate-300;
+  @apply bg-slate-200;
   @apply border-dashed;
-  @apply -translate-x-4;
 }
 
 .drag {

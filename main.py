@@ -2,10 +2,12 @@
 
 import datetime
 import os
+import socket
 import sys
 from typing import Any, Dict, Union
 from pathlib import Path
 import json
+import traceback
 from urllib.parse import urljoin
 import uuid
 import importlib.util
@@ -18,7 +20,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 import config
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -28,6 +30,12 @@ CEXF_SCHEMA_PATH = Path(__file__).parent / 'schema_cexf.json'
 CEXF_SCHEMA = {}
 INJECT_EVAL_SUCCESS = 1
 INJECT_EVAL_FAIL = 2
+
+# The `python` evaluation strategy runs submitted code in a separate sandbox
+# agent (epicbox/Docker) reached over HTTP on this host/port. Kept in sync with
+# tools/SkillAegis-Dashboard/backend/sandboxClient.py.
+SANDBOX_AGENT_HOST = 'localhost'
+SANDBOX_AGENT_PORT = 9573
 
 app = FastAPI()
 
@@ -61,6 +69,26 @@ def register_exception(app: FastAPI):
         exc_str = f'{exc}'.replace('\n', ' ').replace('   ', ' ')
         content = {'status_code': 10422, 'message': exc_str, 'data': None}
         return JSONResponse(content=content, status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception):
+        # Unhandled exceptions are turned into a 500 by Starlette's
+        # ServerErrorMiddleware, which sits OUTSIDE the CORS middleware — so the
+        # error response carries no `Access-Control-Allow-Origin` header, the
+        # browser blocks it, and fetch() only reports an opaque "Failed to
+        # fetch". Return the 500 ourselves with the CORS header attached (and log
+        # the traceback server-side) so the real cause reaches the UI.
+        traceback.print_exc()
+        exc_str = f'{exc}'.replace('\n', ' ').replace('   ', ' ')
+        content = {'status_code': 500, 'message': f'Internal Server Error: {exc_str}', 'data': None}
+        return JSONResponse(
+            content=content,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            headers={'Access-Control-Allow-Origin': '*'},
+        )
+
+
+register_exception(app)
 
 
 def loadInjectEvaluator():
@@ -389,28 +417,65 @@ def testInject(injectToTest) -> dict:
         # Tries to fetch data based on provided auth. Fallback to test_data
         data_to_validate = injectToTest.test_data
         if misp_url and authkey:
-            print(injectToTest)
             data_to_validate, error = fetch_data_for_query_search(misp_url, authkey, inject_evaluation)
         if data_to_validate is False:
             data_to_validate = injectToTest.test_data
 
-        (success, inject_debug) = inject_evaluator.eval_python(authkey, inject_evaluation, data_to_validate, context, debug=True)
+        try:
+            (success, inject_debug) = inject_evaluator.eval_python(authkey, inject_evaluation, data_to_validate, context, debug=True)
+        except OSError as e:
+            # The python strategy runs the submitted code in a separate sandbox
+            # agent (epicbox/Docker) reached over HTTP on localhost:9573. When it
+            # is not running the socket call raises ConnectionRefusedError (an
+            # OSError) — surface an actionable message rather than a bare 500.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    'Python sandbox agent not reachable on localhost:9573. Start it with: '
+                    '(cd tools/SkillAegis-Dashboard/backend && python sandboxAgent.py) — requires Docker.'
+                ),
+            ) from e
         debug = debug + inject_debug
     test_result['outcome'] = INJECT_EVAL_SUCCESS if success else INJECT_EVAL_FAIL
     test_result['debug'] = debug
     return test_result
 
 
+def probe_sandbox_agent(timeout: float = 0.5) -> dict:
+    """Cheaply check whether the python sandbox agent is accepting connections.
+
+    Does a TCP connect only (no container spin-up), so it is safe to poll from
+    the UI. A successful connect means the agent on localhost:9573 is listening;
+    it does not by itself prove the Docker engine behind it is healthy.
+    """
+    result = {'reachable': False, 'host': SANDBOX_AGENT_HOST, 'port': SANDBOX_AGENT_PORT}
+    try:
+        with socket.create_connection((SANDBOX_AGENT_HOST, SANDBOX_AGENT_PORT), timeout=timeout):
+            result['reachable'] = True
+    except OSError as e:
+        result['reason'] = str(e)
+        result['hint'] = (
+            'Start it with: (cd tools/SkillAegis-Dashboard/backend && python sandboxAgent.py) '
+            '— requires Docker.'
+        )
+    return result
+
+
 def testJqPath(path: str, data: dict, extract_type: str) -> tuple:
     inject_evaluator = loadInjectEvaluator()
-    success = True
-    result = False
+    # jq_extract() swallows compile errors and returns None, which is
+    # indistinguishable from a valid-but-empty extraction. Compile the path
+    # first so a malformed jq expression surfaces as a real error to the author
+    # instead of a silent null.
+    import jq
     try:
-        result = inject_evaluator.jq_extract(path, data, extract_type)
+        jq.compile(path)
     except ValueError as e:
-        success = False
-        result = str(e)
-    return (success, result,)
+        message = str(e).splitlines()[0] if str(e) else 'Invalid jq expression'
+        message = message.replace(' (Unix shell quoting issues?)', '')
+        return (False, message,)
+    result = inject_evaluator.jq_extract(path, data, extract_type)
+    return (True, result,)
 
 
 def fetch_data_for_query_search(misp_url, authkey, inject_evaluation):
@@ -598,6 +663,15 @@ def save_inject(scenario_uuid: str, injectOrder: InjectOrder):
 def save_inject(injectToTest: InjectToTestPayload):
     result = testInject(injectToTest)
     return success(f"Injects tested", "Result is attached", result)
+
+
+@app.get("/injects/sandbox-status")
+def sandbox_status():
+    # Lets the UI tell whether the `python` strategy is testable *before* a user
+    # writes/runs code, instead of only discovering it via a 503 after testing.
+    status = probe_sandbox_agent()
+    title = 'Python sandbox agent reachable' if status['reachable'] else 'Python sandbox agent not reachable'
+    return success(title, status.get('hint', ''), status)
 
 
 @app.post("/injects/jq-path-test")

@@ -60,7 +60,7 @@ const messages = computed(() => {
     ></FontAwesomeIcon>
     <strong class="mr-2">{{ props.title }}</strong>
     <p
-      class="text-slate-700 p-1 font-light whitespace-pre"
+      class="text-slate-700 p-1 font-light whitespace-pre-wrap"
       v-for="(message, i) in messages"
       :key="i"
     >
