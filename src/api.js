@@ -16,6 +16,7 @@ const endpoints = {
     'inject-order': '/scenarios/order-inject',
     'inject-test': '/injects/test',
     'inject-jq-path-test': '/injects/jq-path-test',
+    'sandbox-status': '/injects/sandbox-status',
 }
 
 async function get(url) {
@@ -30,11 +31,24 @@ async function get(url) {
 
     const response = await fetch(url, options);
     if (!response.ok) {
-        throw new Error(`Response status: ${response.status}`);
+        throw new Error(await errorMessage(response));
     }
 
     const json = await response.json();
     return json
+}
+
+// Extract a human-readable message from a non-OK response, falling back to the
+// status. The backend returns { message } (custom handlers) or { detail }
+// (HTTPException); reading it means real server errors reach the UI instead of
+// a bare status code.
+async function errorMessage(response) {
+    try {
+        const body = await response.json()
+        return body.message || body.detail || `Response status: ${response.status}`
+    } catch (e) {
+        return `Response status: ${response.status}`
+    }
 }
 
 async function post(url, payload) {
@@ -49,7 +63,7 @@ async function post(url, payload) {
     }
     const response = await fetch(url, options);
     if (!response.ok) {
-        throw new Error(`Response status: ${response.status}`);
+        throw new Error(await errorMessage(response));
     }
 
     const json = await response.json();
@@ -136,4 +150,12 @@ export async function testInject(payload) {
 export async function testJqPath(payload) {
     const url = endpoints['inject-jq-path-test']
     return await post(url, payload)
+}
+
+// Cheap readiness probe for the python-evaluation sandbox agent. Returns the
+// backend payload { reachable, host, port, reason?, hint? } so the python
+// tester can warn upfront when the agent is not running.
+export async function getSandboxStatus() {
+    const data = await get(endpoints['sandbox-status'])
+    return data.data
 }
